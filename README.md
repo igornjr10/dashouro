@@ -25,11 +25,11 @@ OPENROUTER_API_KEY — optional server secret. Never reuses the prior OpenAI key
 Model is locked to openrouter/free with provider max_price prompt/completion = 0 and data_collection = deny. No paid fallback or paid web-search plugins.
 TWELVEDATA_API_KEY — configured locally (.env.local) and in Vercel; plan has XAU/USD access.
 
-Never place keys in source, URL logs, client local storage or hosting manifest.
+Never place keys in source, URL logs or hosting manifest. The only client storage exception is the user's own OpenRouter key when they tick "Lembrar neste navegador" (see below).
 
 For a public Vercel deployment, do not configure `OPENROUTER_API_KEY`: visitors provide their own OpenRouter key for the current browser tab. This keeps a server key from being available to anonymous visitors.
 
-Alternatively the user enters their OpenRouter key into the private dashboard password field. POST /api/openrouter validates it without generating tokens. Only the current tab holds it in memory; requests send it in X-Aurum-OpenRouter-Key over HTTPS. Same-origin and authenticated-user checks apply to both POST routes. The server uses it only for that request and never logs it or returns it. Disconnect/reload clears it. TradingView scripts run in an cross-origin sandboxed iframe, isolated from dashboard credentials. Key validity does not guarantee inference availability. No automatic retries. Errors, quotas and incomplete responses are presented honestly. Responses include actual selected model.
+Alternatively the user enters their OpenRouter key into the private dashboard password field. POST /api/openrouter validates it without generating tokens. By default only the current tab holds it in memory. If the user opts into "Lembrar neste navegador", it is kept in localStorage (aurum-openrouter-key) on that device only, revalidated on page load and removed on disconnect or when OpenRouter rejects it (400/401). Requests send it in X-Aurum-OpenRouter-Key over HTTPS. Same-origin and authenticated-user checks apply to both POST routes. The server uses it only for that request and never logs it or returns it. Disconnect clears it; reload clears it unless remembered. TradingView scripts run in an cross-origin sandboxed iframe, isolated from dashboard credentials. Key validity does not guarantee inference availability. No automatic retries. Errors, quotas and incomplete responses are presented honestly. Responses include actual selected model.
 
 Free endpoint rules: https://openrouter.ai/collections/free-models/
 Provider constraints: https://openrouter.ai/docs/guides/routing/provider-selection

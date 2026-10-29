@@ -2,7 +2,7 @@
 import {useState,useEffect,useMemo,useCallback} from 'react';
 import {AlertTriangle,ArrowDownRight,ArrowUpRight,Minus,Target,Trash2} from 'lucide-react';
 
-type Level='high2h'|'low2h'|'highWindow'|'lowWindow'|'ema20'|'ema50';
+export type Level='high2h'|'low2h'|'highWindow'|'lowWindow'|'ema20'|'ema50'|'pdh'|'pdl'|'pdc'|'asiaHigh'|'asiaLow'|'londonHigh'|'londonLow';
 export type Insight={
  bias:'alta'|'baixa'|'neutro'; confidence:'baixa'|'media'|'alta'; horizonHours:number;
  drivers:{text:string;source:string}[];
@@ -17,7 +17,7 @@ export type Prediction={at:string;bias:Insight['bias'];confidence:Insight['confi
 const KEY='aurum-predictions';
 // A move under 0.15% counts as flat: neutral calls hit inside that band, directional calls only need the right sign.
 const FLAT=0.0015;
-const levelNames:Record<Level,string>={high2h:'máxima das últimas 2h',low2h:'mínima das últimas 2h',highWindow:'máxima da janela M5',lowWindow:'mínima da janela M5',ema20:'EMA 20',ema50:'EMA 50'};
+export const levelNames:Record<Level,string>={high2h:'máxima das últimas 2h',low2h:'mínima das últimas 2h',highWindow:'máxima da janela M5',lowWindow:'mínima da janela M5',ema20:'EMA 20',ema50:'EMA 50',pdh:'máxima de ontem',pdl:'mínima de ontem',pdc:'fechamento de ontem',asiaHigh:'máxima da Ásia',asiaLow:'mínima da Ásia',londonHigh:'máxima de Londres',londonLow:'mínima de Londres'};
 const biasNames={alta:'Alta',baixa:'Baixa',neutro:'Neutro'};
 const confNames={baixa:'baixa',media:'média',alta:'alta'};
 const num=(v:number,d=2)=>new Intl.NumberFormat('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d}).format(v);

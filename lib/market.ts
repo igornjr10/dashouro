@@ -1,5 +1,5 @@
 import {checkRouterKey,generateInsight,requestKey,RouterError,FREE_MODEL} from './openrouter';
-import {indicators,parseBias,type Candle,type Indicators} from './indicators';
+import {indicators,intraday,intradayLevels,parseBias,type Candle,type Indicators,type Intraday} from './indicators';
 export type RuntimeEnv = { OPENROUTER_API_KEY?: string; TWELVEDATA_API_KEY?: string };
 const links = {
  quote: 'https://api.gold-api.com/price/XAU',
@@ -38,15 +38,28 @@ export async function getNews(kind:'news'|'fed') {
 // Candles only change when an M5 bar closes; refetch after the next close (+20s provider latency) to protect the API quota.
 const nextClose=()=>Math.floor(Date.now()/300000)*300000+320000;
 let candlesCache:{until:number;data:unknown}|null=null;
+async function getSeries(env:RuntimeEnv,interval:'5min'|'1h',size:number,barMs:number):Promise<Candle[]>{
+ const q=await fetchData('https://api.twelvedata.com/time_series?'+new URLSearchParams({symbol:'XAU/USD',interval,outputsize:String(size),timezone:'UTC',apikey:env.TWELVEDATA_API_KEY!}));
+ if(q.status==='error'||!Array.isArray(q.values)||q.meta?.symbol!=='XAU/USD'||q.meta?.interval!==interval)throw new Error('Feed '+(interval==='1h'?'H1':'M5')+' indisponível. Verifique o acesso ao XAU/USD no provedor.');
+ const candles:Candle[]=q.values.map((v:Record<string,string>)=>({time:Date.parse(v.datetime.replace(' ','T')+'Z'),open:number(v.open),high:number(v.high),low:number(v.low),close:number(v.close)})).filter((v:Candle)=>Number.isFinite(v.time)&&v.time+barMs<=Date.now()).sort((a:Candle,b:Candle)=>a.time-b.time);
+ if(candles.length<50||candles.some(v=>v.low<=0||v.high<Math.max(v.open,v.close)||v.low>Math.min(v.open,v.close)))throw new Error('Histórico '+(interval==='1h'?'H1':'M5')+' insuficiente ou inválido');
+ return candles;
+}
+// H1 bars feed the day/session levels and the higher-timeframe trend; one fetch per hour per instance (~24/day).
+let h1Cache:{until:number;data:Candle[]}|null=null;
+async function getH1(env:RuntimeEnv){
+ if(h1Cache&&Date.now()<h1Cache.until)return h1Cache.data;
+ const data=await getSeries(env,'1h',120,3600000);
+ h1Cache={until:Math.floor(Date.now()/3600000)*3600000+3620000,data};
+ return data;
+}
 export async function getCandles(env:RuntimeEnv) {
  if(!env.TWELVEDATA_API_KEY) throw new Error('Feed de candles M5 não conectado');
  if(candlesCache&&Date.now()<candlesCache.until)return candlesCache.data;
- const q=await fetchData('https://api.twelvedata.com/time_series?'+new URLSearchParams({symbol:'XAU/USD',interval:'5min',outputsize:'100',timezone:'UTC',apikey:env.TWELVEDATA_API_KEY}));
- if(q.status==='error'||!Array.isArray(q.values)||q.meta?.symbol!=='XAU/USD'||q.meta?.interval!=='5min')throw new Error('Feed M5 indisponível. Verifique o acesso ao XAU/USD no provedor.');
- const candles=q.values.map((v:Record<string,string>)=>({time:Date.parse(v.datetime.replace(' ','T')+'Z'),open:number(v.open),high:number(v.high),low:number(v.low),close:number(v.close)})).filter((v:{time:number})=>Number.isFinite(v.time)&&v.time+300000<=Date.now()).sort((a:{time:number},b:{time:number})=>a.time-b.time);
- if(candles.length<50||candles.some((v:{open:number;close:number;high:number;low:number})=>v.low<=0||v.high<Math.max(v.open,v.close)||v.low>Math.min(v.open,v.close)))throw new Error('Histórico M5 insuficiente ou inválido');
- const last=candles.at(-1); const closes=candles.map((v:{close:number})=>v.close); const ema=(n:number)=>{let e=closes.slice(0,n).reduce((a:number,b:number)=>a+b,0)/n;for(const v of closes.slice(n)) e=v*2/(n+1)+e*(1-2/(n+1));return e;};
- const data={candles,ema20:ema(20),ema50:ema(50),indicators:indicators(candles),updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
+ const [candles,h1]=await Promise.all([getSeries(env,'5min',100,300000),getH1(env).catch(()=>null)]);
+ const day=h1?intraday(h1,candles):null; const ind=indicators(candles); ind.levels={...ind.levels,...intradayLevels(day)};
+ const last=candles.at(-1)!;
+ const data={candles,ema20:ind.levels.ema20,ema50:ind.levels.ema50,indicators:ind,intraday:day,intradayError:h1?null:'Candles H1 indisponíveis: níveis do dia e tendência H1 fora desta análise.',updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
  candlesCache={until:nextClose(),data};
  return data;
 }
@@ -62,9 +75,9 @@ export async function getCalendar() {
  calendarCache={at:Date.now(),data};
  return data;
 }
-const PROMPT=`Você é analista de contexto do ouro (XAU/USD) para Igor. Responda SOMENTE com um objeto JSON válido, sem nenhum texto fora dele, no formato {"bias":"alta"|"baixa"|"neutro","confidence":"baixa"|"media"|"alta","horizonHours":1-4,"drivers":[{"text":"motivo curto","source":"fonte e data"}],"invalidation":{"level":"high2h"|"low2h"|"highWindow"|"lowWindow"|"ema20"|"ema50","condition":"acima"|"abaixo"}|null,"analysis":"texto"}.
-bias é o viés de direção mais provável do preço nas próximas horizonHours horas (1 a 4), não um sinal de entrada. Baseie-o principalmente em candlesM5.indicators (trend, rsi14, ema20Slope1h, change1h, change4h, atr14, levels). COT é semanal de futuros e notícias são só manchetes: use-os como contexto secundário.
-Calibração: se os sinais técnicos conflitarem ou candlesM5.indicators for null, use "neutro" com confiança "baixa". Só use confiança "alta" quando trend, ema20Slope1h, change1h e change4h apontarem para o mesmo lado e o rsi14 estiver entre 25 e 75. Se highImpactUsdWithin4h for true, a confiança máxima é "media" e o evento deve aparecer nos drivers.
+const PROMPT=`Você é analista de contexto do ouro (XAU/USD) para Igor. Responda SOMENTE com um objeto JSON válido, sem nenhum texto fora dele, no formato {"bias":"alta"|"baixa"|"neutro","confidence":"baixa"|"media"|"alta","horizonHours":1-4,"drivers":[{"text":"motivo curto","source":"fonte e data"}],"invalidation":{"level":"<uma chave de candlesM5.indicators.levels>","condition":"acima"|"abaixo"}|null,"analysis":"texto"}.
+bias é o viés de direção mais provável do preço nas próximas horizonHours horas (1 a 4), não um sinal de entrada. Baseie-o principalmente em candlesM5.indicators (trend, rsi14, ema20Slope1h, change1h, change4h, atr14, levels) e em candlesM5.intraday: h1 (tendência H1, que tem peso maior que o M5), previousDay (máxima, mínima e fechamento do dia anterior), today e sessions (faixas de Ásia, Londres e Nova York de hoje). Diga onde o preço está em relação a esses níveis do dia. COT é semanal de futuros e notícias são só manchetes: use-os como contexto secundário.
+Calibração: se os sinais técnicos conflitarem ou candlesM5.indicators for null, use "neutro" com confiança "baixa". Se a tendência H1 contrariar o viés, a confiança máxima é "media". Só use confiança "alta" quando trend, h1.trend, ema20Slope1h, change1h e change4h apontarem para o mesmo lado e o rsi14 estiver entre 25 e 75. Se highImpactUsdWithin4h for true, a confiança máxima é "media" e o evento deve aparecer nos drivers.
 drivers: até 3, do mais forte para o mais fraco, cada um com fonte e data. invalidation: para alta, condition "abaixo" e um nível abaixo do preço; para baixa, "acima" e um nível acima; para neutro, null. Informe só a chave do nível, nunca um preço.
 analysis: português, até 250 palavras, quatro parágrafos curtos separados por linha em branco: Contexto, Evidências, Cenários condicionais e Lacunas. Cite fonte e data em cada conclusão factual. Use apenas números presentes nos dados anexados; não invente preços, eventos, consenso, probabilidades, fluxo, suportes ou resistências. A agenda econômica vem de agregador não oficial: use-a só para alertar eventos USD próximos. Não recomende compra, venda, entrada, stop ou alvo, e diga que o timing de entrada não é avaliado sem agenda econômica oficial. A cotação spot não é preço executável. Não alegue acesso visual ao TradingView. Termine lembrando de validar spread e condições na corretora.`;
 async function safe(fn:()=>Promise<unknown>){try{return {ok:true,data:await fn()}}catch(e){return {ok:false,error:e instanceof Error?e.message:'Fonte indisponível'}}}
@@ -82,16 +95,16 @@ export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response
   const [quote,cot,news,fed,candles,calendar]=await Promise.all([safe(getQuote),safe(getCot),safe(()=>getNews('news')),safe(()=>getNews('fed')),safe(()=>getCandles(env)),safe(getCalendar)]);
   if(!quote.ok)return response({error:'Sem cotação verificável, a análise está bloqueada.'},503);
   if((quote.data as {stale:boolean}).stale)return response({error:'Cotação desatualizada. Aguarde dados atuais para analisar.'},503);
-  const c=candles.ok?candles.data as {candles:Candle[];indicators:Indicators;updatedAt:string;stale:boolean;source:string}:null;
+  const c=candles.ok?candles.data as {candles:Candle[];indicators:Indicators;intraday:Intraday|null;updatedAt:string;stale:boolean;source:string}:null;
   const ind=c&&!c.stale?c.indicators:null;
   const at=new Date().toISOString(), horizonEnd=Date.now()+4*3600000;
   const eventSoon=calendar.ok&&(calendar.data as {events:{impact:string;date:string}[]}).events.some(e=>e.impact==='High'&&Date.parse(e.date)>Date.now()&&Date.parse(e.date)<horizonEnd);
   // The model gets computed indicators plus the last 2h of bars, not the full window: fewer tokens, faster free-model replies.
-  const candlesM5=c?{indicators:ind,recent:c.candles.slice(-24),updatedAt:c.updatedAt,stale:c.stale,source:c.source}:candles;
+  const candlesM5=c?{indicators:ind,intraday:ind?c.intraday:null,recent:c.candles.slice(-24),updatedAt:c.updatedAt,stale:c.stale,source:c.source}:candles;
   const context={at,quote,cot,news,fed,candlesM5,calendar,highImpactUsdWithin4h:eventSoon};
   try{
    const result=await generateInsight(key,PROMPT,context,true);
-   const bias=parseBias(result.text,ind,eventSoon);
+   const bias=parseBias(result.text,ind,eventSoon,ind?c?.intraday?.h1?.trend:undefined);
    if(!bias)return response({error:'O modelo não devolveu a previsão no formato exigido. Nada foi apresentado; tente novamente.'},502);
    const reference=ind&&c?{price:ind.close,time:c.updatedAt,source:'Twelve Data · fechamento M5'}:null;
    return response({...bias,model:result.model,provider:result.provider,at,reference,eventSoon,indicators:ind});

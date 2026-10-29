@@ -10,18 +10,20 @@ GET /api/quote: Gold API USD per troy ounce, updates on browser every 30 seconds
 GET /api/cot: CFTC Socrata disaggregated futures only, contract 088691, newest 2 reports.
 GET /api/news: Google News personal RSS feed, gold / Fed, past 3 days.
 GET /api/fed: official Federal Reserve monetary policy RSS.
-GET /api/candles: Twelve Data XAU/USD 5min, last 100 bars, completed candles only.
+GET /api/candles: Twelve Data XAU/USD 5min (100 requested, ~99 completed bars) plus 1h (120 bars, cached until the next hour, ~24 calls/day). Server-computed indicators (EMA, RSI, ATR, momentum, recent highs/lows) and intraday levels: previous UTC day high/low/close, today's Asia/London/New York session ranges (approximate UTC hours), H1 trend. If H1 fails, M5 still returns with intradayError.
 GET /api/calendar: faireconomy (ForexFactory) weekly feed, USD high/medium impact only, cached 15 min per instance. Unofficial aggregator: alert-only, never treated as a verified calendar.
 GET /api/config: credential presence only, never secret values.
-POST /api/insight: same-origin call, fresh source collection and OpenRouter Chat Completions API. No model call without a credential supplied by the current browser session. No entry timing recommendation without candles AND verified economic calendar; the latter is not yet connected. No brokerage execution.
+POST /api/insight: same-origin call, fresh source collection and OpenRouter Chat Completions API. No model call without a credential supplied by the current browser session. Returns a structured directional bias (alta/baixa/neutro, confidence, 1–4h horizon, drivers, invalidation). The model only names an invalidation level key; the server resolves it to a computed price. Server caps: neutral/low without current candles; confidence at most "media" with a high-impact USD event within 4h or when H1 trend opposes the bias. A bias is not an entry signal: no entry timing recommendation without candles AND verified economic calendar; the latter is not yet connected. No brokerage execution.
 
-TradingView OANDA:XAUUSD chart is independent from quote and AI feeds. It does not transmit its candles to the AI. Disclose source differences and latency in UI.
+Predictions are logged in this browser (localStorage) and scored against the Twelve Data M5 close at horizon end; the scoreboard shows the hit rate. Price/event alerts use browser notifications from the open tab only, driven by the Gold API spot quote.
+
+The default chart (Lightweight Charts) draws the same Twelve Data candles the AI receives, with EMAs, levels, invalidation, horizon band, past predictions and USD events. The TradingView OANDA:XAUUSD chart remains as an independent option and does not transmit its candles to the AI. Disclose source differences and latency in UI.
 
 ## Server secrets, configured only in Sites
 
 OPENROUTER_API_KEY — optional server secret. Never reuses the prior OpenAI key.
 Model is locked to openrouter/free with provider max_price prompt/completion = 0 and data_collection = deny. No paid fallback or paid web-search plugins.
-TWELVEDATA_API_KEY — pending a key with authorized XAU/USD access.
+TWELVEDATA_API_KEY — configured locally (.env.local) and in Vercel; plan has XAU/USD access.
 
 Never place keys in source, URL logs, client local storage or hosting manifest.
 

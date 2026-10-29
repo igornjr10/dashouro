@@ -3,7 +3,7 @@ import {useEffect,useRef} from 'react';
 import type {Insight,Prediction} from './forecast';
 
 type Candle={time:number;open:number;high:number;low:number;close:number};
-type Levels={high2h:number;low2h:number;highWindow:number;lowWindow:number};
+type Levels={high2h:number;low2h:number;highWindow:number;lowWindow:number;pdh?:number;pdl?:number;pdc?:number;asiaHigh?:number;asiaLow?:number;londonHigh?:number;londonLow?:number};
 type CalEvent={title:string;date:string;impact:'High'|'Medium'};
 const SLOT=300000;
 const sec=(ms:number)=>Math.floor(ms/1000) as never;
@@ -55,8 +55,13 @@ export function MarketChart({candles,levels,insight,predictions,events}:{candles
    if(levels){
     const lv=(p:number,title:string,color:string)=>price.createPriceLine({price:p,color,lineWidth:1,lineStyle:LineStyle.Dashed,axisLabelVisible:true,title});
     lv(levels.high2h,'máx 2h','#7f8c86'); lv(levels.low2h,'mín 2h','#7f8c86');
-    if(levels.highWindow!==levels.high2h)lv(levels.highWindow,'máx janela','#56605c');
-    if(levels.lowWindow!==levels.low2h)lv(levels.lowWindow,'mín janela','#56605c');
+    // Day levels replace the window extremes, which mostly repeat the current session range.
+    if(levels.pdh===undefined){
+     if(levels.highWindow!==levels.high2h)lv(levels.highWindow,'máx janela','#56605c');
+     if(levels.lowWindow!==levels.low2h)lv(levels.lowWindow,'mín janela','#56605c');
+    }
+    const day:[keyof Levels,string,string][]=[['pdh','máx ontem','#9b7fc4'],['pdl','mín ontem','#9b7fc4'],['pdc','fech ontem','#6f5a8f'],['asiaHigh','máx Ásia','#4f9aa8'],['asiaLow','mín Ásia','#4f9aa8'],['londonHigh','máx Londres','#b08a4f'],['londonLow','mín Londres','#b08a4f']];
+    for(const [k,title,color] of day){const p=levels[k];if(typeof p==='number')price.createPriceLine({price:p,color,lineWidth:1,lineStyle:LineStyle.LargeDashed,axisLabelVisible:true,title})}
    }
    if(insight?.invalidation)price.createPriceLine({price:insight.invalidation.price,color:'#e0604f',lineWidth:2,lineStyle:LineStyle.Solid,axisLabelVisible:true,title:'invalida '+insight.invalidation.condition});
 
@@ -75,4 +80,17 @@ export function MarketChart({candles,levels,insight,predictions,events}:{candles
   return()=>{cancelled=true;dispose()};
  },[candles,levels,insight,predictions,events]);
  return <div className="chart-surface own-chart" ref={box}/>;
+}
+
+type Intraday={previousDay:{high:number;low:number;close:number;date:string}|null;today:{open:number;high:number;low:number}|null;sessions:{key:string;name:string;high:number;low:number;status:string}[];h1:{trend:string;ema20:number;ema50:number;rsi14:number;change24h:number|null}|null;note:string};
+const n2=(v:number)=>new Intl.NumberFormat('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
+const trendClass=(t:string)=>t==='alta'?'green':t==='baixa'?'red':'gold-text';
+export function DayContext({day,error}:{day:Intraday|null;error:string|null}){
+ if(!day)return error?<div className="panel-note">{error}</div>:null;
+ return <div className="day-context">
+  {day.h1&&<div><small>Tendência H1</small><strong className={trendClass(day.h1.trend)}>{day.h1.trend}</strong><em>RSI {n2(day.h1.rsi14)}{day.h1.change24h!==null&&` · 24h ${day.h1.change24h>0?'+':''}${n2(day.h1.change24h)}`}</em></div>}
+  {day.previousDay&&<div><small>Ontem ({day.previousDay.date.slice(8,10)}/{day.previousDay.date.slice(5,7)})</small><strong>{n2(day.previousDay.low)} – {n2(day.previousDay.high)}</strong><em>fechamento {n2(day.previousDay.close)}</em></div>}
+  {day.sessions.map(s=><div key={s.key}><small>{s.name} · {s.status}</small><strong>{n2(s.low)} – {n2(s.high)}</strong><em>amplitude {n2(s.high-s.low)}</em></div>)}
+  <p className="day-note">{day.note}</p>
+ </div>;
 }

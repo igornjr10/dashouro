@@ -4,7 +4,8 @@ const links = {
  quote: 'https://api.gold-api.com/price/XAU',
  cot: 'https://publicreporting.cftc.gov/resource/72hh-3qpy.json?' + new URLSearchParams({'$where':"cftc_contract_market_code='088691'",'$order':'report_date_as_yyyy_mm_dd DESC','$limit':'2','$select':'report_date_as_yyyy_mm_dd,m_money_positions_long_all,m_money_positions_short_all,open_interest_all'}),
  news: 'https://news.google.com/rss/search?q=gold+prices+Federal+Reserve+when:3d&hl=en-US&gl=US&ceid=US:en',
- fed: 'https://www.federalreserve.gov/feeds/press_monetary.xml'
+ fed: 'https://www.federalreserve.gov/feeds/press_monetary.xml',
+ calendar: 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
 };
 async function fetchData(url:string, json=true): Promise<any> {
  let r:Response; try { r = await fetch(url,{signal:AbortSignal.timeout(12000),headers:{Accept:json?'application/json':'application/rss+xml,application/xml,text/xml'}}); } catch { throw new Error('Não foi possível alcançar a fonte. Tente atualizar.'); }
@@ -42,6 +43,18 @@ export async function getCandles(env:RuntimeEnv) {
  const last=candles.at(-1); const closes=candles.map((v:{close:number})=>v.close); const ema=(n:number)=>{let e=closes.slice(0,n).reduce((a:number,b:number)=>a+b,0)/n;for(const v of closes.slice(n)) e=v*2/(n+1)+e*(1-2/(n+1));return e;};
  return {candles,ema20:ema(20),ema50:ema(50),updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
 }
+// The aggregator asks clients to poll sparingly; one fetch per instance every 15 minutes.
+let calendarCache:{at:number;data:unknown}|null=null;
+export async function getCalendar() {
+ if(calendarCache&&Date.now()-calendarCache.at<900000)return calendarCache.data;
+ const rows=await fetchData(links.calendar); if(!Array.isArray(rows))throw new Error('Agenda indisponível');
+ const events=rows.filter(r=>r?.country==='USD'&&(r.impact==='High'||r.impact==='Medium')&&typeof r.title==='string'&&Number.isFinite(Date.parse(r.date)))
+  .map(r=>({title:String(r.title),date:new Date(Date.parse(r.date)).toISOString(),impact:r.impact as 'High'|'Medium',forecast:typeof r.forecast==='string'?r.forecast:'',previous:typeof r.previous==='string'?r.previous:''}))
+  .sort((a,b)=>Date.parse(a.date)-Date.parse(b.date));
+ const data={events,source:'ForexFactory · agregador (faireconomy)',url:'https://www.forexfactory.com/calendar',fetchedAt:new Date().toISOString(),note:'Semana atual, eventos USD de impacto alto e médio. Horários e previsões de agregador não oficial; sem valores realizados. Confirme no Fed, BLS ou BEA.'};
+ calendarCache={at:Date.now(),data};
+ return data;
+}
 async function safe(fn:()=>Promise<unknown>){try{return {ok:true,data:await fn()}}catch(e){return {ok:false,error:e instanceof Error?e.message:'Fonte indisponível'}}}
 const response=(data:unknown,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'private, no-store'}});
 export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response>{
@@ -53,16 +66,16 @@ export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response
   let key:string;
   try{key=requestKey(request,env.OPENROUTER_API_KEY);if(path==='/api/openrouter')return response(await checkRouterKey(key));}
   catch(e){return response({error:e instanceof RouterError?e.message:'Não foi possível validar a conexão OpenRouter.'},e instanceof RouterError?e.status:502);}
-  const [quote,cot,news,fed,candles]=await Promise.all([safe(getQuote),safe(getCot),safe(()=>getNews('news')),safe(()=>getNews('fed')),safe(()=>getCandles(env))]);
+  const [quote,cot,news,fed,candles,calendar]=await Promise.all([safe(getQuote),safe(getCot),safe(()=>getNews('news')),safe(()=>getNews('fed')),safe(()=>getCandles(env)),safe(getCalendar)]);
   if(!quote.ok)return response({error:'Sem cotação verificável, a análise está bloqueada.'},503);
   if((quote.data as {stale:boolean}).stale)return response({error:'Cotação desatualizada. Aguarde dados atuais para analisar.'},503);
-  const context={at:new Date().toISOString(),quote,cot,news,fed,candles};
+  const context={at:new Date().toISOString(),quote,cot,news,fed,candles,calendar};
   try{
-   const result=await generateInsight(key,'Você é analista de contexto do ouro para Igor. Responda em português, com no máximo 350 palavras e exatamente quatro parágrafos curtos: Contexto, Evidências, Cenários condicionais e Lacunas. Use somente os dados anexados e cite fonte e data em cada conclusão factual. Notícias são apenas manchetes, não fatos verificados. Não invente preços, eventos, consenso, probabilidades, fluxo, retornos, suportes ou resistências. COT é semanal de futuros, não fluxo spot; a cotação spot não é preço executável. Sem candles M5 atuais e agenda econômica validada, declare que timing não pode ser avaliado; não recomende compra, venda ou alvos numéricos. Cite fontes falhas ou desatualizadas, não alegue acesso visual ao TradingView e termine lembrando de validar spread e condições na corretora.',context);
-   return response({...result,at:context.at,sources:{quote,cot,news,fed,candles}});
+   const result=await generateInsight(key,'Você é analista de contexto do ouro para Igor. Responda em português, com no máximo 350 palavras e exatamente quatro parágrafos curtos: Contexto, Evidências, Cenários condicionais e Lacunas. Use somente os dados anexados e cite fonte e data em cada conclusão factual. Notícias são apenas manchetes, não fatos verificados. Não invente preços, eventos, consenso, probabilidades, fluxo, retornos, suportes ou resistências. COT é semanal de futuros, não fluxo spot; a cotação spot não é preço executável. A agenda econômica anexada vem de agregador não oficial e não é validada: use-a só para alertar eventos USD de alto impacto próximos, com horário, nunca para sugerir entrada. Sem candles M5 atuais e agenda econômica validada, declare que timing não pode ser avaliado; não recomende compra, venda ou alvos numéricos. Cite fontes falhas ou desatualizadas, não alegue acesso visual ao TradingView e termine lembrando de validar spread e condições na corretora.',context);
+   return response({...result,at:context.at,sources:{quote,cot,news,fed,candles,calendar}});
   }catch(e){return response({error:e instanceof RouterError?e.message:'A conexão com OpenRouter falhou ou excedeu o tempo. Tente mais tarde.'},e instanceof RouterError?e.status:502)}
  }
- const fns:Record<string,()=>Promise<unknown>>={'/api/quote':getQuote,'/api/cot':getCot,'/api/news':()=>getNews('news'),'/api/fed':()=>getNews('fed'),'/api/candles':()=>getCandles(env)};
+ const fns:Record<string,()=>Promise<unknown>>={'/api/quote':getQuote,'/api/cot':getCot,'/api/news':()=>getNews('news'),'/api/fed':()=>getNews('fed'),'/api/candles':()=>getCandles(env),'/api/calendar':getCalendar};
  if(!fns[path])return response({error:'Não encontrado'},404);
  if(request.method!=='GET')return response({error:'Método inválido'},405);
  const result=await safe(fns[path]); return response({...result,checkedAt:new Date().toISOString()},result.ok?200:503);

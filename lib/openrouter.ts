@@ -33,7 +33,7 @@ export async function generateInsight(key:string,instructions:string,context:unk
  const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{
   method:'POST',signal:AbortSignal.timeout(60000),
   headers:{'Content-Type':'application/json',Authorization:'Bearer '+key,'X-OpenRouter-Title':'Aurum'},
-  body:JSON.stringify({model:FREE_MODEL,max_tokens:2400,stream:false,
+  body:JSON.stringify({model:FREE_MODEL,max_tokens:1200,stream:false,
    provider:{max_price:{prompt:0,completion:0},data_collection:'deny'},
    messages:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(context)}]})
  });

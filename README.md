@@ -12,17 +12,22 @@ GET /api/news: Google News personal RSS feed, gold / Fed, past 3 days.
 GET /api/fed: official Federal Reserve monetary policy RSS.
 GET /api/candles: Twelve Data XAU/USD 5min, last 100 bars, completed candles only.
 GET /api/config: credential presence only, never secret values.
-POST /api/insight: authenticated same-origin call, fresh source collection and OpenAI Responses API. No model call without configured credential. No entry timing recommendation without candles AND verified economic calendar; the latter is not yet connected. No brokerage execution.
+POST /api/insight: authenticated same-origin call, fresh source collection and OpenRouter Chat Completions API. No model call without configured credential. No entry timing recommendation without candles AND verified economic calendar; the latter is not yet connected. No brokerage execution.
 
 TradingView OANDA:XAUUSD chart is independent from quote and AI feeds. It does not transmit its candles to the AI. Disclose source differences and latency in UI.
 
 ## Server secrets, configured only in Sites
 
-OPENAI_API_KEY — pending user connection via OpenAI Developers plugin.
-OPENAI_MODEL — optional, defaults to gpt-4.1-mini.
+OPENROUTER_API_KEY — optional server secret. Never reuses the prior OpenAI key.
+Model is locked to openrouter/free with provider max_price prompt/completion = 0 and data_collection = deny. No paid fallback or paid web-search plugins.
 TWELVEDATA_API_KEY — pending a key with authorized XAU/USD access.
 
 Never place keys in source, URL logs, client local storage or hosting manifest.
+
+Alternatively the user enters their OpenRouter key into the private dashboard password field. POST /api/openrouter validates it without generating tokens. Only the current tab holds it in memory; requests send it in X-Aurum-OpenRouter-Key over HTTPS. Same-origin and authenticated-user checks apply to both POST routes. The server uses it only for that request and never logs it or returns it. Disconnect/reload clears it. TradingView scripts run in an cross-origin sandboxed iframe, isolated from dashboard credentials. Key validity does not guarantee inference availability. No automatic retries. Errors, quotas and incomplete responses are presented honestly. Responses include actual selected model.
+
+Free endpoint rules: https://openrouter.ai/collections/free-models/
+Provider constraints: https://openrouter.ai/docs/guides/routing/provider-selection
 
 ## Browser storage
 

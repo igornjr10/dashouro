@@ -50,7 +50,6 @@ export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response
  if(path==='/api/insight'||path==='/api/openrouter'){
   if(request.method!=='POST')return response({error:'Método inválido'},405);
   if(request.headers.get('origin')!==new URL(request.url).origin)return response({error:'Origem inválida'},403);
-  if(!request.headers.get('oai-authenticated-user-id'))return response({error:'Entre com sua conta para usar a IA.'},401);
   let key:string;
   try{key=requestKey(request,env.OPENROUTER_API_KEY);if(path==='/api/openrouter')return response(await checkRouterKey(key));}
   catch(e){return response({error:e instanceof RouterError?e.message:'Não foi possível validar a conexão OpenRouter.'},e instanceof RouterError?e.status:502);}

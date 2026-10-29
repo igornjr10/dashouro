@@ -11,6 +11,7 @@ GET /api/cot: CFTC Socrata disaggregated futures only, contract 088691, newest 2
 GET /api/news: Google News personal RSS feed, gold / Fed, past 3 days.
 GET /api/fed: official Federal Reserve monetary policy RSS.
 GET /api/candles: Twelve Data XAU/USD 5min, last 100 bars, completed candles only.
+GET /api/calendar: faireconomy (ForexFactory) weekly feed, USD high/medium impact only, cached 15 min per instance. Unofficial aggregator: alert-only, never treated as a verified calendar.
 GET /api/config: credential presence only, never secret values.
 POST /api/insight: same-origin call, fresh source collection and OpenRouter Chat Completions API. No model call without a credential supplied by the current browser session. No entry timing recommendation without candles AND verified economic calendar; the latter is not yet connected. No brokerage execution.
 
@@ -34,6 +35,12 @@ Provider constraints: https://openrouter.ai/docs/guides/routing/provider-selecti
 ## Browser storage
 
 Only the user's manually authored plan/checklist is saved in this browser. No account balance or financial details are transmitted by the calculator. No prefilled values. Position calculation uses user-chosen risk, stop, ounces/lot, lot step, and per-lot round-trip cost; rounds down. Gap losses can exceed estimate.
+
+## Local development (Vercel build)
+
+pnpm install, then pnpm dev:vercel. Vite serves the SPA and /api/* through the same marketApi handler. Optional secrets go in .env.local (git-ignored).
+
+The Vercel function stays on the Edge runtime: a move to Node.js returned 500 on every route and was reverted.
 
 ## Checks
 

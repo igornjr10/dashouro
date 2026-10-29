@@ -23,7 +23,9 @@ function requestHeaders(headers: VercelRequest["headers"]) {
 
 function requestBody(method: string, body: unknown) {
   if (method === "GET" || method === "HEAD" || body === undefined) return undefined;
-  return typeof body === "string" || body instanceof Uint8Array ? body : JSON.stringify(body);
+  if (typeof body === "string") return body;
+  if (body instanceof Uint8Array) return new TextDecoder().decode(body);
+  return JSON.stringify(body);
 }
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {

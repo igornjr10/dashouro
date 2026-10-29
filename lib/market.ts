@@ -34,14 +34,20 @@ export async function getNews(kind:'news'|'fed') {
  if(!items.length) throw new Error('Nenhuma notícia válida retornada');
  return {items,source:kind==='fed'?'Federal Reserve':'Google News · agregador',url:kind==='fed'?'https://www.federalreserve.gov/newsevents.htm':'https://news.google.com',fetchedAt:new Date().toISOString()};
 }
+// Candles only change when an M5 bar closes; refetch after the next close (+20s provider latency) to protect the API quota.
+const nextClose=()=>Math.floor(Date.now()/300000)*300000+320000;
+let candlesCache:{until:number;data:unknown}|null=null;
 export async function getCandles(env:RuntimeEnv) {
  if(!env.TWELVEDATA_API_KEY) throw new Error('Feed de candles M5 não conectado');
+ if(candlesCache&&Date.now()<candlesCache.until)return candlesCache.data;
  const q=await fetchData('https://api.twelvedata.com/time_series?'+new URLSearchParams({symbol:'XAU/USD',interval:'5min',outputsize:'100',timezone:'UTC',apikey:env.TWELVEDATA_API_KEY}));
  if(q.status==='error'||!Array.isArray(q.values)||q.meta?.symbol!=='XAU/USD'||q.meta?.interval!=='5min')throw new Error('Feed M5 indisponível. Verifique o acesso ao XAU/USD no provedor.');
  const candles=q.values.map((v:Record<string,string>)=>({time:Date.parse(v.datetime.replace(' ','T')+'Z'),open:number(v.open),high:number(v.high),low:number(v.low),close:number(v.close)})).filter((v:{time:number})=>Number.isFinite(v.time)&&v.time+300000<=Date.now()).sort((a:{time:number},b:{time:number})=>a.time-b.time);
  if(candles.length<50||candles.some((v:{open:number;close:number;high:number;low:number})=>v.low<=0||v.high<Math.max(v.open,v.close)||v.low>Math.min(v.open,v.close)))throw new Error('Histórico M5 insuficiente ou inválido');
  const last=candles.at(-1); const closes=candles.map((v:{close:number})=>v.close); const ema=(n:number)=>{let e=closes.slice(0,n).reduce((a:number,b:number)=>a+b,0)/n;for(const v of closes.slice(n)) e=v*2/(n+1)+e*(1-2/(n+1));return e;};
- return {candles,ema20:ema(20),ema50:ema(50),updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
+ const data={candles,ema20:ema(20),ema50:ema(50),updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
+ candlesCache={until:nextClose(),data};
+ return data;
 }
 // The aggregator asks clients to poll sparingly; one fetch per instance every 15 minutes.
 let calendarCache:{at:number;data:unknown}|null=null;
@@ -56,7 +62,8 @@ export async function getCalendar() {
  return data;
 }
 async function safe(fn:()=>Promise<unknown>){try{return {ok:true,data:await fn()}}catch(e){return {ok:false,error:e instanceof Error?e.message:'Fonte indisponível'}}}
-const response=(data:unknown,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'private, no-store'}});
+// ttl>0 lets the Vercel CDN share a successful response across visitors; errors are never cached.
+const response=(data:unknown,status=200,ttl=0)=>Response.json(data,{status,headers:{'Cache-Control':ttl>0&&status===200?`public, max-age=0, s-maxage=${ttl}`:'private, no-store'}});
 export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response>{
  const path=new URL(request.url).pathname;
  if(path==='/api/config'&&request.method==='GET') return response({aiConfigured:!!env.OPENROUTER_API_KEY,provider:'OpenRouter',model:FREE_MODEL,candlesConfigured:!!env.TWELVEDATA_API_KEY});
@@ -78,5 +85,6 @@ export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response
  const fns:Record<string,()=>Promise<unknown>>={'/api/quote':getQuote,'/api/cot':getCot,'/api/news':()=>getNews('news'),'/api/fed':()=>getNews('fed'),'/api/candles':()=>getCandles(env),'/api/calendar':getCalendar};
  if(!fns[path])return response({error:'Não encontrado'},404);
  if(request.method!=='GET')return response({error:'Método inválido'},405);
- const result=await safe(fns[path]); return response({...result,checkedAt:new Date().toISOString()},result.ok?200:503);
+ const ttl=path==='/api/candles'?Math.ceil((nextClose()-Date.now())/1000):path==='/api/calendar'?900:0;
+ const result=await safe(fns[path]); return response({...result,checkedAt:new Date().toISOString()},result.ok?200:503,ttl);
 }

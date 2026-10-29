@@ -29,11 +29,12 @@ export async function checkRouterKey(key:string){
  const quota=q&&[q.used,q.limit,q.remaining].every(v=>Number.isFinite(v)&&v>=0)?q:null;
  return {connected:true,provider:'OpenRouter',model:FREE_MODEL,quota};
 }
-export async function generateInsight(key:string,instructions:string,context:unknown){
+export async function generateInsight(key:string,instructions:string,context:unknown,json=false){
  const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{
   method:'POST',signal:AbortSignal.timeout(60000),
   headers:{'Content-Type':'application/json',Authorization:'Bearer '+key,'X-OpenRouter-Title':'Aurum'},
-  body:JSON.stringify({model:FREE_MODEL,max_tokens:1200,stream:false,
+  // Free models are often reasoning models whose thinking counts against max_tokens; keep it short and leave room for the answer.
+  body:JSON.stringify({model:FREE_MODEL,max_tokens:4000,reasoning:{effort:'low',exclude:true},stream:false,...(json?{response_format:{type:'json_object'}}:{}),
    provider:{max_price:{prompt:0,completion:0},data_collection:'deny'},
    messages:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(context)}]})
  });

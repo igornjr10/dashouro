@@ -23,11 +23,11 @@ export function TradeButtons({busy,onCheck}:{busy:Side|null;onCheck:(s:Side)=>vo
  </div>;
 }
 
-export function useTradeCheck(getKey:()=>string){
+export function useTradeCheck(getHeaders:()=>Record<string,string>,onSaved:()=>void){
  const [result,setResult]=useState<Result|null>(null),[busy,setBusy]=useState<Side|null>(null),[error,setError]=useState('');
  const run=async(side:Side)=>{
   setBusy(side);setError('');setResult(null);
-  try{const key=getKey();const r=await fetch('/api/check?side='+side,{method:'POST',headers:key?{'X-Aurum-OpenRouter-Key':key}:{}});const j=await r.json() as Result&{error?:string};if(!r.ok)throw new Error(j.error);setResult(j)}
+  try{const r=await fetch('/api/check?side='+side,{method:'POST',headers:getHeaders()});const j=await r.json() as Result&{error?:string;saved?:boolean};if(!r.ok)throw new Error(j.error);setResult(j);if(j.saved)onSaved()}
   catch(e){setError(e instanceof Error?e.message:'Falha ao avaliar a operação.')}
   finally{setBusy(null)}
  };

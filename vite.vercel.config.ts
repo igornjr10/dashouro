@@ -30,7 +30,7 @@ function localApi(env: RuntimeEnv): Plugin {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   return {
-    plugins: [react(), localApi({ OPENROUTER_API_KEY: env.OPENROUTER_API_KEY, TWELVEDATA_API_KEY: env.TWELVEDATA_API_KEY })],
+    plugins: [react(), localApi({ OPENROUTER_API_KEY: env.OPENROUTER_API_KEY, TWELVEDATA_API_KEY: env.TWELVEDATA_API_KEY, SUPABASE_URL: env.SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY, AURUM_ACCESS_TOKEN: env.AURUM_ACCESS_TOKEN })],
     build: {
       outDir: "dist/vercel",
     },

@@ -35,17 +35,34 @@ function score(p:Prediction,candles:Candle[]|null):Result|undefined{
 const load=():Prediction[]|null=>{try{const s=JSON.parse(localStorage.getItem(KEY)||'[]');return Array.isArray(s)?s:[]}catch{return null}};
 const store=(list:Prediction[])=>{try{localStorage.setItem(KEY,JSON.stringify(list))}catch{}};
 
-export function usePredictions(candles:Candle[]|null){
- const [saved,setSaved]=useState<Prediction[]>([]);
+type Rate={total:number;hits:number};
+export type CheckRow={id:string;created_at:string;side:'buy'|'sell';verdict:string;passed:number;total:number;price:number;stop_price:number;target_price:number|null;rr:number|null;block:string|null};
+type Remote={list:Prediction[];checks:CheckRow[];stats:{overall:Rate;byBias:Record<string,Rate>;byConfidence:Record<string,Rate>}};
+type ServerRow={created_at:string;bias:Prediction['bias'];confidence:Prediction['confidence'];horizon_hours:number;ref_price:number;ref_time:string;model:string|null;status:string;result_price:number|null;result_move:number|null;hit:boolean|null};
+const fromServer=(r:ServerRow):Prediction=>({at:r.created_at,bias:r.bias,confidence:r.confidence,horizonHours:r.horizon_hours,refPrice:Number(r.ref_price),refTime:r.ref_time,model:r.model||'',
+ result:r.status==='pending'?undefined:r.status==='unchecked'?'unchecked':{price:Number(r.result_price),move:Number(r.result_move),hit:!!r.hit}});
+
+// With an access token the database is the source of truth (scored on the server); without one, the browser log stays as before.
+export function usePredictions(candles:Candle[]|null,access=''){
+ const [saved,setSaved]=useState<Prediction[]>([]),[remote,setRemote]=useState<Remote|null>(null),[syncError,setSyncError]=useState('');
  // Mount-time read of this browser's prediction log.
  // eslint-disable-next-line react-hooks/set-state-in-effect
  useEffect(()=>{setSaved(load()||[])},[]);
- const list=useMemo(()=>saved.map(p=>p.result?p:{...p,result:score(p,candles)}),[saved,candles]);
+ const sync=useCallback(async()=>{
+  if(!access){setRemote(null);setSyncError('');return}
+  try{const r=await fetch('/api/history',{headers:{'X-Aurum-Access':access},cache:'no-store'});const j=await r.json() as {error?:string;predictions:ServerRow[];checks:CheckRow[];stats:Remote['stats']};if(!r.ok)throw new Error(j.error);
+   setRemote({list:(j.predictions as ServerRow[]).map(fromServer),checks:j.checks,stats:j.stats});setSyncError('')}
+  catch(e){setRemote(null);setSyncError(e instanceof Error?e.message:'Falha ao ler o histórico.')}
+ },[access]);
+ // Re-sync when the token changes and on each M5 refresh, which is when the server can score pending predictions.
+ // eslint-disable-next-line react-hooks/set-state-in-effect
+ useEffect(()=>{sync()},[sync,candles]);
+ const local=useMemo(()=>saved.map(p=>p.result?p:{...p,result:score(p,candles)}),[saved,candles]);
  // Persist results as soon as they are scored, because the M5 window only covers the last ~8h.
- useEffect(()=>{if(list.some((p,i)=>p.result&&!saved[i].result))store(list)},[list,saved]);
- const add=useCallback((i:Insight)=>{if(!i.reference)return;const p:Prediction={at:i.at,bias:i.bias,confidence:i.confidence,horizonHours:i.horizonHours,refPrice:i.reference.price,refTime:i.reference.time,model:i.model};setSaved(s=>{const n=[p,...(load()??s)].slice(0,50);store(n);return n})},[]);
+ useEffect(()=>{if(local.some((p,i)=>p.result&&!saved[i].result))store(local)},[local,saved]);
+ const add=useCallback((i:Insight&{saved?:boolean})=>{if(!i.reference)return;if(i.saved){sync();return}const p:Prediction={at:i.at,bias:i.bias,confidence:i.confidence,horizonHours:i.horizonHours,refPrice:i.reference.price,refTime:i.reference.time,model:i.model};setSaved(s=>{const n=[p,...(load()??s)].slice(0,50);store(n);return n})},[sync]);
  const clear=useCallback(()=>{store([]);setSaved([])},[]);
- return {list,add,clear};
+ return {list:remote?remote.list:local,remote,syncError,sync,add,clear};
 }
 
 const BiasIcon=({bias,size=22}:{bias:Insight['bias'];size?:number})=>bias==='alta'?<ArrowUpRight size={size}/>:bias==='baixa'?<ArrowDownRight size={size}/>:<Minus size={size}/>;
@@ -68,23 +85,42 @@ export function Forecast({insight}:{insight:Insight}){
  </div>;
 }
 
-export function Scoreboard({list,clear}:{list:Prediction[];clear:()=>void}){
+const verdictNames:Record<string,string>={favoravel:'Favorável',ressalvas:'Com ressalvas',desfavoravel:'Desfavorável','nao-operar':'Não operar'};
+const pct=(r?:Rate)=>r&&r.total?`${Math.round(r.hits/r.total*100)}% (${r.hits}/${r.total})`:'—';
+function AccessForm({onSave}:{onSave:(v:string)=>void}){
+ return <form className="access-form" onSubmit={e=>{e.preventDefault();const v=(e.currentTarget.elements.namedItem('access') as HTMLInputElement).value.trim();if(v)onSave(v)}}>
+  <input name="access" type="password" autoComplete="current-password" placeholder="Senha de acesso ao banco" required/>
+  <button type="submit" className="button">Sincronizar</button>
+ </form>;
+}
+export function Scoreboard({predictions,clear,dbConfigured,access,setAccess}:{predictions:ReturnType<typeof usePredictions>;clear:()=>void;dbConfigured:boolean;access:string;setAccess:(v:string)=>void}){
+ const {list,remote,syncError}=predictions;
  const done=list.filter(p=>p.result&&p.result!=='unchecked') as (Prediction&{result:{price:number;move:number;hit:boolean}})[];
  const hits=done.filter(p=>p.result.hit).length, pending=list.filter(p=>!p.result).length;
+ const total=remote?remote.stats.overall:{total:done.length,hits};
  return <section className="panel scoreboard">
-  <div className="panel-heading"><h2><Target size={17}/>Placar das previsões</h2>{list.length>0&&<button className="icon-button" aria-label="Apagar histórico de previsões" onClick={clear}><Trash2 size={15}/></button>}</div>
-  {list.length===0?<div className="panel-note">Nenhuma previsão registrada neste navegador. Cada análise gerada entra aqui e é conferida quando o horizonte vence.</div>:<>
+  <div className="panel-heading"><h2><Target size={17}/>Placar das previsões</h2>
+   {remote?<span className="status-pill good">Banco sincronizado</span>:list.length>0&&<button className="icon-button" aria-label="Apagar histórico de previsões deste navegador" onClick={clear}><Trash2 size={15}/></button>}
+  </div>
+  {dbConfigured&&!remote&&<div className="access-box">{syncError&&access?<p className="connection-error">{syncError}</p>:<p className="small muted">Digite a senha de acesso para salvar previsões e avaliações no banco e ver o mesmo placar em qualquer aparelho.</p>}<AccessForm onSave={setAccess}/></div>}
+  {list.length===0?<div className="panel-note">Nenhuma previsão registrada{remote?' no banco':' neste navegador'}. Cada análise gerada entra aqui e é conferida quando o horizonte vence.</div>:<>
    <div className="score-summary">
-    <div><small>Acertos</small><strong>{done.length?`${hits} de ${done.length}`:'—'}</strong></div>
-    <div><small>Taxa</small><strong>{done.length?`${Math.round(hits/done.length*100)}%`:'—'}</strong></div>
+    <div><small>Acertos</small><strong>{total.total?`${total.hits} de ${total.total}`:'—'}</strong></div>
+    <div><small>Taxa</small><strong>{total.total?`${Math.round(total.hits/total.total*100)}%`:'—'}</strong></div>
     <div><small>Aguardando</small><strong>{pending}</strong></div>
+    {remote&&<><div><small>Confiança alta</small><strong>{pct(remote.stats.byConfidence.alta)}</strong></div><div><small>Confiança média</small><strong>{pct(remote.stats.byConfidence.media)}</strong></div><div><small>Confiança baixa</small><strong>{pct(remote.stats.byConfidence.baixa)}</strong></div></>}
    </div>
    <div className="score-list">{list.slice(0,8).map((p,i)=><div key={i} className="score-row">
     <span className={'bias-chip bias-'+p.bias}><BiasIcon bias={p.bias} size={13}/>{biasNames[p.bias]}</span>
     <span className="score-when">{time(p.at)} · {p.horizonHours}h · conf. {confNames[p.confidence]}</span>
     <span className="score-result">{!p.result?'aguardando':p.result==='unchecked'?'não conferida':<>{num(p.refPrice)} → {num(p.result.price)} <b className={p.result.hit?'green':'red'}>{p.result.hit?'acertou':'errou'}</b></>}</span>
    </div>)}</div>
-   <div className="panel-note">Conferido com o fechamento M5 da Twelve Data no fim do horizonte. Alta/baixa acertam com o sinal certo; neutro acerta se o preço variar menos de 0,15%. Previsões com mais de ~8h sem conferência ficam como “não conferida”. {done.length<20&&'Com menos de 20 previsões conferidas, a taxa ainda não diz muito.'}</div>
   </>}
+  {remote&&remote.checks.length>0&&<><div className="score-subhead">Últimas avaliações de compra e venda</div><div className="score-list">{remote.checks.slice(0,8).map(c=><div key={c.id} className="score-row">
+   <span className={'bias-chip bias-'+(c.side==='buy'?'alta':'baixa')}>{c.side==='buy'?'Compra':'Venda'}</span>
+   <span className="score-when">{time(c.created_at)} · {c.passed}/{c.total} critérios · preço {num(Number(c.price))}</span>
+   <span className="score-result">{verdictNames[c.verdict]||c.verdict}</span>
+  </div>)}</div></>}
+  <div className="panel-note">Conferido com o fechamento M5 da Twelve Data no fim do horizonte. Alta/baixa acertam com o sinal certo; neutro acerta se o preço variar menos de 0,15%. {remote?'No banco, a conferência é feita pelo servidor sempre que algum aparelho abre o painel dentro de ~8h após o vencimento.':'Previsões com mais de ~8h sem conferência ficam como “não conferida”.'} {total.total<20&&'Com menos de 20 previsões conferidas, a taxa ainda não diz muito.'}{remote&&<> <button className="text-button" onClick={()=>setAccess('')}>Sair do banco neste aparelho</button></>}</div>
  </section>;
 }

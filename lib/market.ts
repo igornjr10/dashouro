@@ -1,7 +1,13 @@
 import {checkRouterKey,generateInsight,requestKey,RouterError,FREE_MODEL} from './openrouter';
 import {indicators,intraday,intradayLevels,parseBias,type Candle,type Indicators,type Intraday} from './indicators';
 import {checkTrade} from './trade-check';
-export type RuntimeEnv = { OPENROUTER_API_KEY?: string; TWELVEDATA_API_KEY?: string };
+import {authorized,history,saveCheck,savePrediction,storeEnabled,type StoreEnv} from './store';
+// Saving is best effort: a database failure never blocks the analysis the user asked for.
+const persist=async(env:RuntimeEnv,request:Request,write:()=>Promise<unknown>)=>{
+ if(!storeEnabled(env)||!authorized(request,env))return false;
+ try{await write();return true}catch{return false}
+};
+export type RuntimeEnv = { OPENROUTER_API_KEY?: string; TWELVEDATA_API_KEY?: string } & StoreEnv;
 const links = {
  quote: 'https://api.gold-api.com/price/XAU',
  cot: 'https://publicreporting.cftc.gov/resource/72hh-3qpy.json?' + new URLSearchParams({'$where':"cftc_contract_market_code='088691'",'$order':'report_date_as_yyyy_mm_dd DESC','$limit':'2','$select':'report_date_as_yyyy_mm_dd,m_money_positions_long_all,m_money_positions_short_all,open_interest_all'}),
@@ -96,7 +102,15 @@ async function safe(fn:()=>Promise<unknown>){try{return {ok:true,data:await fn()
 const response=(data:unknown,status=200,ttl=0)=>Response.json(data,{status,headers:{'Cache-Control':ttl>0&&status===200?`public, max-age=0, s-maxage=${ttl}`:'private, no-store'}});
 export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response>{
  const path=new URL(request.url).pathname;
- if(path==='/api/config'&&request.method==='GET') return response({aiConfigured:!!env.OPENROUTER_API_KEY,provider:'OpenRouter',model:FREE_MODEL,candlesConfigured:!!env.TWELVEDATA_API_KEY});
+ if(path==='/api/config'&&request.method==='GET') return response({aiConfigured:!!env.OPENROUTER_API_KEY,provider:'OpenRouter',model:FREE_MODEL,candlesConfigured:!!env.TWELVEDATA_API_KEY,dbConfigured:storeEnabled(env)});
+ if(path==='/api/history'){
+  if(request.method!=='GET')return response({error:'Método inválido'},405);
+  if(!storeEnabled(env))return response({error:'Banco de dados não configurado.'},503);
+  if(!authorized(request,env))return response({error:'Senha de acesso inválida.'},401);
+  const candles=await safe(()=>getCandles(env));
+  try{return response(await history(env,candles.ok?(candles.data as {candles:Candle[]}).candles:null))}
+  catch{return response({error:'Não foi possível ler o histórico no banco.'},502)}
+ }
  if(path==='/api/check'){
   if(request.method!=='POST')return response({error:'Método inválido'},405);
   if(request.headers.get('origin')!==new URL(request.url).origin)return response({error:'Origem inválida'},403);
@@ -109,12 +123,13 @@ export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response
   const check=checkTrade(side,c.indicators,c.intraday,events,c.stale);
   const base={...check,at:new Date().toISOString(),candlesAt:c.updatedAt,calendarOk:calendar.ok};
   // The explanation is optional: without an OpenRouter key the checklist still answers.
-  let key:string; try{key=requestKey(request,env.OPENROUTER_API_KEY)}catch{return response({...base,explanation:null,explanationError:'Conecte o OpenRouter para receber a explicação da IA.'})}
+  const done=async(extra:Record<string,unknown>,model?:string)=>response({...base,...extra,model,saved:await persist(env,request,()=>saveCheck(env,check,model))});
+  let key:string; try{key=requestKey(request,env.OPENROUTER_API_KEY)}catch{return done({explanation:null,explanationError:'Conecte o OpenRouter para receber a explicação da IA.'})}
   const [quote,cot,news,fed]=await Promise.all([safe(getQuote),safe(getCot),safe(()=>getNews('news')),safe(()=>getNews('fed'))]);
   try{
    const r=await generateInsight(key,CHECK_PROMPT,{check,intraday:c.intraday,quote,cot,news,fed,calendar},true);
-   return response({...base,explanation:parseExplanation(r.text),model:r.model});
-  }catch(e){return response({...base,explanation:null,explanationError:e instanceof RouterError?e.message:'A IA não respondeu; o checklist acima continua válido.'})}
+   return done({explanation:parseExplanation(r.text)},r.model);
+  }catch(e){return done({explanation:null,explanationError:e instanceof RouterError?e.message:'A IA não respondeu; o checklist acima continua válido.'})}
  }
  if(path==='/api/insight'||path==='/api/openrouter'){
   if(request.method!=='POST')return response({error:'Método inválido'},405);
@@ -137,7 +152,8 @@ export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response
    const bias=parseBias(result.text,ind,eventSoon,ind?c?.intraday?.h1?.trend:undefined);
    if(!bias)return response({error:'O modelo não devolveu a previsão no formato exigido. Nada foi apresentado; tente novamente.'},502);
    const reference=ind&&c?{price:ind.close,time:c.updatedAt,source:'Twelve Data · fechamento M5'}:null;
-   return response({...bias,model:result.model,provider:result.provider,at,reference,eventSoon,indicators:ind});
+   const saved=reference?await persist(env,request,()=>savePrediction(env,bias,reference,result.model)):false;
+   return response({...bias,model:result.model,provider:result.provider,at,reference,eventSoon,indicators:ind,saved});
   }catch(e){return response({error:e instanceof RouterError?e.message:'A conexão com OpenRouter falhou ou excedeu o tempo. Tente mais tarde.'},e instanceof RouterError?e.status:502)}
  }
  const fns:Record<string,()=>Promise<unknown>>={'/api/quote':getQuote,'/api/cot':getCot,'/api/news':()=>getNews('news'),'/api/fed':()=>getNews('fed'),'/api/candles':()=>getCandles(env),'/api/calendar':getCalendar};

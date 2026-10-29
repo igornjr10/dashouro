@@ -34,3 +34,7 @@ node node_modules/typescript/bin/tsc --noEmit
 node /root/.codex/plugins/cache/openai-curated-remote/sites/1.1.2/scripts/build-site.mjs
 
 Use Sites source workflow for source push, packaging and private publication.
+
+## Brokerage context
+
+User confirmed Exness via its app/site. This is a preference, not an authenticated feed. No Exness credentials, prices or candles have been connected. OANDA TradingView and Gold API remain explicitly labeled independent references. Exness API eligibility must be verified in the user Personal Area before any integration. Do not assume that using the Exness app establishes the underlying account platform or API access.

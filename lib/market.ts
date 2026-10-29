@@ -1,5 +1,6 @@
 import {checkRouterKey,generateInsight,requestKey,RouterError,FREE_MODEL} from './openrouter';
 import {indicators,intraday,intradayLevels,parseBias,type Candle,type Indicators,type Intraday} from './indicators';
+import {checkTrade} from './trade-check';
 export type RuntimeEnv = { OPENROUTER_API_KEY?: string; TWELVEDATA_API_KEY?: string };
 const links = {
  quote: 'https://api.gold-api.com/price/XAU',
@@ -80,12 +81,41 @@ bias é o viés de direção mais provável do preço nas próximas horizonHours
 Calibração: se os sinais técnicos conflitarem ou candlesM5.indicators for null, use "neutro" com confiança "baixa". Se a tendência H1 contrariar o viés, a confiança máxima é "media". Só use confiança "alta" quando trend, h1.trend, ema20Slope1h, change1h e change4h apontarem para o mesmo lado e o rsi14 estiver entre 25 e 75. Se highImpactUsdWithin4h for true, a confiança máxima é "media" e o evento deve aparecer nos drivers.
 drivers: até 3, do mais forte para o mais fraco, cada um com fonte e data. invalidation: para alta, condition "abaixo" e um nível abaixo do preço; para baixa, "acima" e um nível acima; para neutro, null. Informe só a chave do nível, nunca um preço.
 analysis: português, até 250 palavras, quatro parágrafos curtos separados por linha em branco: Contexto, Evidências, Cenários condicionais e Lacunas. Cite fonte e data em cada conclusão factual. Use apenas números presentes nos dados anexados; não invente preços, eventos, consenso, probabilidades, fluxo, suportes ou resistências. A agenda econômica vem de agregador não oficial: use-a só para alertar eventos USD próximos. Não recomende compra, venda, entrada, stop ou alvo, e diga que o timing de entrada não é avaliado sem agenda econômica oficial. A cotação spot não é preço executável. Não alegue acesso visual ao TradingView. Termine lembrando de validar spread e condições na corretora.`;
+const CHECK_PROMPT=`Você explica para Igor a avaliação de uma operação em XAU/USD que ele está considerando (check.side: buy = compra, sell = venda). O veredito em check.verdict foi calculado por regras fixas e NÃO pode ser alterado nem contestado: favoravel, ressalvas, desfavoravel ou nao-operar. Responda SOMENTE com JSON válido: {"summary":"uma frase em português explicando o veredito","pros":["até 3 pontos a favor"],"cons":["até 3 pontos contra ou riscos"],"context":"até 80 palavras sobre notícias, Fed e COT que reforçam ou enfraquecem a operação, citando fonte e data"}.
+Use só números presentes nos dados. Não invente preços, alvos, probabilidades ou eventos. Não diga para comprar nem vender: descreva os fatores e deixe a decisão com ele. Notícias são só manchetes; COT é semanal; a agenda é de agregador não oficial. Se check.eventWarning existir, ele deve aparecer em cons.`;
+function parseExplanation(text:string){
+ const s=text.replace(/```(?:json)?/g,''); const a=s.indexOf('{'), b=s.lastIndexOf('}');
+ try{
+  const j=JSON.parse(s.slice(a,b+1)); const list=(v:unknown)=>Array.isArray(v)?v.filter(x=>typeof x==='string'&&x.trim()).slice(0,3):[];
+  if(typeof j.summary!=='string')return null;
+  return {summary:j.summary.trim(),pros:list(j.pros),cons:list(j.cons),context:typeof j.context==='string'?j.context.trim():''};
+ }catch{return null}
+}
 async function safe(fn:()=>Promise<unknown>){try{return {ok:true,data:await fn()}}catch(e){return {ok:false,error:e instanceof Error?e.message:'Fonte indisponível'}}}
 // ttl>0 lets the Vercel CDN share a successful response across visitors; errors are never cached.
 const response=(data:unknown,status=200,ttl=0)=>Response.json(data,{status,headers:{'Cache-Control':ttl>0&&status===200?`public, max-age=0, s-maxage=${ttl}`:'private, no-store'}});
 export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response>{
  const path=new URL(request.url).pathname;
  if(path==='/api/config'&&request.method==='GET') return response({aiConfigured:!!env.OPENROUTER_API_KEY,provider:'OpenRouter',model:FREE_MODEL,candlesConfigured:!!env.TWELVEDATA_API_KEY});
+ if(path==='/api/check'){
+  if(request.method!=='POST')return response({error:'Método inválido'},405);
+  if(request.headers.get('origin')!==new URL(request.url).origin)return response({error:'Origem inválida'},403);
+  const side=new URL(request.url).searchParams.get('side');
+  if(side!=='buy'&&side!=='sell')return response({error:'Lado inválido'},400);
+  const [candles,calendar]=await Promise.all([safe(()=>getCandles(env)),safe(getCalendar)]);
+  if(!candles.ok)return response({error:'Sem candles M5, a operação não pode ser avaliada.'},503);
+  const c=candles.data as {indicators:Indicators;intraday:Intraday|null;stale:boolean;updatedAt:string};
+  const events=calendar.ok?(calendar.data as {events:{title:string;date:string;impact:string}[]}).events:[];
+  const check=checkTrade(side,c.indicators,c.intraday,events,c.stale);
+  const base={...check,at:new Date().toISOString(),candlesAt:c.updatedAt,calendarOk:calendar.ok};
+  // The explanation is optional: without an OpenRouter key the checklist still answers.
+  let key:string; try{key=requestKey(request,env.OPENROUTER_API_KEY)}catch{return response({...base,explanation:null,explanationError:'Conecte o OpenRouter para receber a explicação da IA.'})}
+  const [quote,cot,news,fed]=await Promise.all([safe(getQuote),safe(getCot),safe(()=>getNews('news')),safe(()=>getNews('fed'))]);
+  try{
+   const r=await generateInsight(key,CHECK_PROMPT,{check,intraday:c.intraday,quote,cot,news,fed,calendar},true);
+   return response({...base,explanation:parseExplanation(r.text),model:r.model});
+  }catch(e){return response({...base,explanation:null,explanationError:e instanceof RouterError?e.message:'A IA não respondeu; o checklist acima continua válido.'})}
+ }
  if(path==='/api/insight'||path==='/api/openrouter'){
   if(request.method!=='POST')return response({error:'Método inválido'},405);
   if(request.headers.get('origin')!==new URL(request.url).origin)return response({error:'Origem inválida'},403);

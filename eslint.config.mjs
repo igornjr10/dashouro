@@ -14,6 +14,14 @@ const eslintConfig = defineConfig([
     "work/**",
   ]),
   {
+    files: ["app/**/*.{ts,tsx}", "lib/**/*.{ts,mts}"],
+    rules: {
+      // The Vercel build is a Vite SPA, not Next routing; external JSON stays loosely typed.
+      "@next/next/no-html-link-for-pages": "off",
+      "@typescript-eslint/no-explicit-any": "warn",
+    },
+  },
+  {
     files: ["components/ui/**/*.{ts,tsx}", "hooks/use-mobile.ts"],
     rules: {
       // These files are vendored verbatim from shadcn@4.17.0. Keep the

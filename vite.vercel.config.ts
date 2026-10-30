@@ -15,7 +15,11 @@ function localApi(env: RuntimeEnv): Plugin {
           const { marketApi } = await server.ssrLoadModule("/lib/market.ts");
           const headers = new Headers();
           for (const [k, v] of Object.entries(req.headers)) if (typeof v === "string") headers.set(k, v);
-          const response: Response = await marketApi(new Request(`http://${req.headers.host}${req.url}`, { method: req.method, headers }), env);
+          // Forward the request body for POST routes such as /api/signal.
+          const chunks: Buffer[] = [];
+          if (req.method !== "GET" && req.method !== "HEAD") for await (const c of req) chunks.push(c as Buffer);
+          const body = chunks.length ? Buffer.concat(chunks) : undefined;
+          const response: Response = await marketApi(new Request(`http://${req.headers.host}${req.url}`, { method: req.method, headers, body }), env);
           res.statusCode = response.status;
           response.headers.forEach((v, k) => res.setHeader(k, v));
           res.end(Buffer.from(await response.arrayBuffer()));
@@ -30,7 +34,7 @@ function localApi(env: RuntimeEnv): Plugin {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   return {
-    plugins: [react(), localApi({ OPENROUTER_API_KEY: env.OPENROUTER_API_KEY, TWELVEDATA_API_KEY: env.TWELVEDATA_API_KEY })],
+    plugins: [react(), localApi({ OPENROUTER_API_KEY: env.OPENROUTER_API_KEY, TWELVEDATA_API_KEY: env.TWELVEDATA_API_KEY, SUPABASE_URL: env.SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY, AURUM_ACCESS_TOKEN: env.AURUM_ACCESS_TOKEN, TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET: env.TELEGRAM_WEBHOOK_SECRET, TELEGRAM_OWNER_ID: env.TELEGRAM_OWNER_ID })],
     build: {
       outDir: "dist/vercel",
     },

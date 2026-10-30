@@ -1,6 +1,15 @@
 import {checkRouterKey,generateInsight,requestKey,RouterError,FREE_MODEL} from './openrouter';
 import {indicators,intraday,intradayLevels,parseBias,type Candle,type Indicators,type Intraday} from './indicators';
-export type RuntimeEnv = { OPENROUTER_API_KEY?: string; TWELVEDATA_API_KEY?: string };
+import {checkTrade} from './trade-check';
+import {authorized,history,saveCheck,savePrediction,saveSignal,scoreSignals,signalHistory,storeEnabled,type StoreEnv} from './store';
+import {parseSignal,ruleCheck} from './signals';
+import {gauge,pressure} from './sentiment';
+// Saving is best effort: a database failure never blocks the analysis the user asked for.
+const persist=async(env:RuntimeEnv,request:Request,write:()=>Promise<unknown>)=>{
+ if(!storeEnabled(env)||!authorized(request,env))return false;
+ try{await write();return true}catch{return false}
+};
+export type RuntimeEnv = { OPENROUTER_API_KEY?: string; TWELVEDATA_API_KEY?: string; TELEGRAM_BOT_TOKEN?: string; TELEGRAM_WEBHOOK_SECRET?: string; TELEGRAM_OWNER_ID?: string } & StoreEnv;
 const links = {
  quote: 'https://api.gold-api.com/price/XAU',
  cot: 'https://publicreporting.cftc.gov/resource/72hh-3qpy.json?' + new URLSearchParams({'$where':"cftc_contract_market_code='088691'",'$order':'report_date_as_yyyy_mm_dd DESC','$limit':'2','$select':'report_date_as_yyyy_mm_dd,m_money_positions_long_all,m_money_positions_short_all,open_interest_all'}),
@@ -38,14 +47,22 @@ export async function getNews(kind:'news'|'fed') {
 // Candles only change when an M5 bar closes; refetch after the next close (+20s provider latency) to protect the API quota.
 const nextClose=()=>Math.floor(Date.now()/300000)*300000+320000;
 let candlesCache:{until:number;data:unknown}|null=null;
-async function getSeries(env:RuntimeEnv,interval:'5min'|'1h',size:number,barMs:number):Promise<Candle[]>{
+async function getSeries(env:RuntimeEnv,interval:'5min'|'15min'|'1h',size:number,barMs:number):Promise<Candle[]>{
  const q=await fetchData('https://api.twelvedata.com/time_series?'+new URLSearchParams({symbol:'XAU/USD',interval,outputsize:String(size),timezone:'UTC',apikey:env.TWELVEDATA_API_KEY!}));
- if(q.status==='error'||!Array.isArray(q.values)||q.meta?.symbol!=='XAU/USD'||q.meta?.interval!==interval)throw new Error('Feed '+(interval==='1h'?'H1':'M5')+' indisponível. Verifique o acesso ao XAU/USD no provedor.');
+ if(q.status==='error'||!Array.isArray(q.values)||q.meta?.symbol!=='XAU/USD'||q.meta?.interval!==interval)throw new Error('Feed '+(interval==='1h'?'H1':interval==='15min'?'M15':'M5')+' indisponível. Verifique o acesso ao XAU/USD no provedor.');
  const candles:Candle[]=q.values.map((v:Record<string,string>)=>({time:Date.parse(v.datetime.replace(' ','T')+'Z'),open:number(v.open),high:number(v.high),low:number(v.low),close:number(v.close)})).filter((v:Candle)=>Number.isFinite(v.time)&&v.time+barMs<=Date.now()).sort((a:Candle,b:Candle)=>a.time-b.time);
- if(candles.length<50||candles.some(v=>v.low<=0||v.high<Math.max(v.open,v.close)||v.low>Math.min(v.open,v.close)))throw new Error('Histórico '+(interval==='1h'?'H1':'M5')+' insuficiente ou inválido');
+ if(candles.length<50||candles.some(v=>v.low<=0||v.high<Math.max(v.open,v.close)||v.low>Math.min(v.open,v.close)))throw new Error('Histórico '+(interval==='1h'?'H1':interval==='15min'?'M15':'M5')+' insuficiente ou inválido');
  return candles;
 }
 // H1 bars feed the day/session levels and the higher-timeframe trend; one fetch per hour per instance (~24/day).
+// M15 for the chart only, refetched after each 15-minute close (~96 calls/day).
+let m15Cache:{until:number;data:Candle[]}|null=null;
+async function getM15(env:RuntimeEnv){
+ if(m15Cache&&Date.now()<m15Cache.until)return m15Cache.data;
+ const data=await getSeries(env,'15min',200,900000);
+ m15Cache={until:Math.floor(Date.now()/900000)*900000+920000,data};
+ return data;
+}
 let h1Cache:{until:number;data:Candle[]}|null=null;
 async function getH1(env:RuntimeEnv){
  if(h1Cache&&Date.now()<h1Cache.until)return h1Cache.data;
@@ -56,11 +73,14 @@ async function getH1(env:RuntimeEnv){
 export async function getCandles(env:RuntimeEnv) {
  if(!env.TWELVEDATA_API_KEY) throw new Error('Feed de candles M5 não conectado');
  if(candlesCache&&Date.now()<candlesCache.until)return candlesCache.data;
- const [candles,h1]=await Promise.all([getSeries(env,'5min',100,300000),getH1(env).catch(()=>null)]);
+ // One credit per call regardless of size, so ~25h of M5 costs the same as 8h.
+ const [candles,h1,m15]=await Promise.all([getSeries(env,'5min',300,300000),getH1(env).catch(()=>null),getM15(env).catch(()=>null)]);
  const day=h1?intraday(h1,candles):null; const ind=indicators(candles); ind.levels={...ind.levels,...intradayLevels(day)};
  const last=candles.at(-1)!;
- const data={candles,ema20:ind.levels.ema20,ema50:ind.levels.ema50,indicators:ind,intraday:day,intradayError:h1?null:'Candles H1 indisponíveis: níveis do dia e tendência H1 fora desta análise.',updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
- candlesCache={until:nextClose(),data};
+ const data={candles,ema20:ind.levels.ema20,ema50:ind.levels.ema50,indicators:ind,intraday:day,chart:{m15,h1},sentiment:{m5:gauge(candles),h1:h1?gauge(h1):null,pressure:pressure(candles)},intradayError:h1?null:'Candles H1 indisponíveis: níveis do dia e tendência H1 fora desta análise.',updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
+ // If the provider has not published the bar that just closed yet, retry in 30s instead of holding stale data for 5 min.
+ const behind=last.time+300000<Math.floor(Date.now()/300000)*300000;
+ candlesCache={until:behind?Date.now()+30000:nextClose(),data};
  return data;
 }
 // The aggregator asks clients to poll sparingly; one fetch per instance every 15 minutes.
@@ -76,16 +96,132 @@ export async function getCalendar() {
  return data;
 }
 const PROMPT=`Você é analista de contexto do ouro (XAU/USD) para Igor. Responda SOMENTE com um objeto JSON válido, sem nenhum texto fora dele, no formato {"bias":"alta"|"baixa"|"neutro","confidence":"baixa"|"media"|"alta","horizonHours":1-4,"drivers":[{"text":"motivo curto","source":"fonte e data"}],"invalidation":{"level":"<uma chave de candlesM5.indicators.levels>","condition":"acima"|"abaixo"}|null,"analysis":"texto"}.
-bias é o viés de direção mais provável do preço nas próximas horizonHours horas (1 a 4), não um sinal de entrada. Baseie-o principalmente em candlesM5.indicators (trend, rsi14, ema20Slope1h, change1h, change4h, atr14, levels) e em candlesM5.intraday: h1 (tendência H1, que tem peso maior que o M5), previousDay (máxima, mínima e fechamento do dia anterior), today e sessions (faixas de Ásia, Londres e Nova York de hoje). Diga onde o preço está em relação a esses níveis do dia. COT é semanal de futuros e notícias são só manchetes: use-os como contexto secundário.
+bias é o viés de direção mais provável do preço nas próximas horizonHours horas (1 a 4), não um sinal de entrada. Baseie-o principalmente em candlesM5.indicators (trend, rsi14, ema20Slope1h, change1h, change4h, atr14, levels) e em candlesM5.sentiment (resumo técnico M5 e H1 por votos de médias e osciladores, e pressão compradora/vendedora dos últimos 24 candles M5) e em candlesM5.intraday: h1 (tendência H1, que tem peso maior que o M5), previousDay (máxima, mínima e fechamento do dia anterior), today e sessions (faixas de Ásia, Londres e Nova York de hoje). Diga onde o preço está em relação a esses níveis do dia. COT é semanal de futuros e notícias são só manchetes: use-os como contexto secundário.
 Calibração: se os sinais técnicos conflitarem ou candlesM5.indicators for null, use "neutro" com confiança "baixa". Se a tendência H1 contrariar o viés, a confiança máxima é "media". Só use confiança "alta" quando trend, h1.trend, ema20Slope1h, change1h e change4h apontarem para o mesmo lado e o rsi14 estiver entre 25 e 75. Se highImpactUsdWithin4h for true, a confiança máxima é "media" e o evento deve aparecer nos drivers.
 drivers: até 3, do mais forte para o mais fraco, cada um com fonte e data. invalidation: para alta, condition "abaixo" e um nível abaixo do preço; para baixa, "acima" e um nível acima; para neutro, null. Informe só a chave do nível, nunca um preço.
 analysis: português, até 250 palavras, quatro parágrafos curtos separados por linha em branco: Contexto, Evidências, Cenários condicionais e Lacunas. Cite fonte e data em cada conclusão factual. Use apenas números presentes nos dados anexados; não invente preços, eventos, consenso, probabilidades, fluxo, suportes ou resistências. A agenda econômica vem de agregador não oficial: use-a só para alertar eventos USD próximos. Não recomende compra, venda, entrada, stop ou alvo, e diga que o timing de entrada não é avaliado sem agenda econômica oficial. A cotação spot não é preço executável. Não alegue acesso visual ao TradingView. Termine lembrando de validar spread e condições na corretora.`;
+const CHECK_PROMPT=`Você explica para Igor a avaliação de uma operação em XAU/USD que ele está considerando (check.side: buy = compra, sell = venda). O veredito em check.verdict foi calculado por regras fixas e NÃO pode ser alterado nem contestado: favoravel, ressalvas, desfavoravel ou nao-operar. Responda SOMENTE com JSON válido: {"summary":"uma frase em português explicando o veredito","pros":["até 3 pontos a favor"],"cons":["até 3 pontos contra ou riscos"],"context":"até 80 palavras sobre notícias, Fed e COT que reforçam ou enfraquecem a operação, citando fonte e data"}.
+Use só números presentes nos dados. Não invente preços, alvos, probabilidades ou eventos. Não diga para comprar nem vender: descreva os fatores e deixe a decisão com ele. Notícias são só manchetes; COT é semanal; a agenda é de agregador não oficial. Se check.eventWarning existir, ele deve aparecer em cons.
+Igor opera scalping e day trade com regras próprias, já aplicadas em check.plan: 1 pip = 0,10 USD; SL máximo de 30 pips na Ásia e em Londres e 50 em Nova York; TP1 20, TP2 40–50 e TP3 80+ pips; camada de proteção com mesmo lote e mesmo SL quando a operação está 10–20 pips contra; no TP1 o SL vai para o ponto de equilíbrio. Fale em pips, use os preços de check.plan e aponte em cons se o stop técnico não coube no limite da sessão, se há um nível antes do TP1, ou se o prejuízo com a camada (check.plan.layer.lossAtSlPips) for alto.`;
+function parseExplanation(text:string){
+ const s=text.replace(/```(?:json)?/g,''); const a=s.indexOf('{'), b=s.lastIndexOf('}');
+ try{
+  const j=JSON.parse(s.slice(a,b+1)); const list=(v:unknown)=>Array.isArray(v)?v.filter(x=>typeof x==='string'&&x.trim()).slice(0,3):[];
+  if(typeof j.summary!=='string')return null;
+  return {summary:j.summary.trim(),pros:list(j.pros),cons:list(j.cons),context:typeof j.context==='string'?j.context.trim():''};
+ }catch{return null}
+}
+type Sentiment={m5:ReturnType<typeof gauge>;h1:ReturnType<typeof gauge>;pressure:ReturnType<typeof pressure>};
+// The model gets only the labels and counts, not every indicator value.
+const summarize=(s:Sentiment)=>({m5:s.m5&&{label:s.m5.summary.label,buy:s.m5.summary.buy,sell:s.m5.summary.sell,neutral:s.m5.summary.neutral},h1:s.h1&&{label:s.h1.summary.label,buy:s.h1.summary.buy,sell:s.h1.summary.sell,neutral:s.h1.summary.neutral},pressure:s.pressure});
 async function safe(fn:()=>Promise<unknown>){try{return {ok:true,data:await fn()}}catch(e){return {ok:false,error:e instanceof Error?e.message:'Fonte indisponível'}}}
+// H1 bars before the M5 window plus the M5 window: enough history to score signals up to ~5 days old.
+async function scoringBars(env:RuntimeEnv):Promise<Candle[]>{
+ const [m5,h1]=await Promise.all([safe(()=>getCandles(env)),getH1(env).catch(()=>[] as Candle[])]);
+ const m=m5.ok?(m5.data as {candles:Candle[]}).candles:[];
+ return [...h1.filter(b=>!m.length||b.time+3600000<=m[0].time),...m];
+}
+// Parses, checks against Igor's rules and the current market, and stores (when allowed). Shared by paste and Telegram.
+async function processSignal(env:RuntimeEnv,text:string,source:'paste'|'telegram',signalTime:number,dedupeKey:string,canSave:boolean){
+ const p=parseSignal(text);
+ if('error' in p)return {ok:false as const,error:p.error};
+ const s=p.signal, rules=ruleCheck(s,signalTime);
+ // The market checklist only means something while the signal is fresh.
+ const fresh=Date.now()-signalTime<30*60000;
+ let market:ReturnType<typeof checkTrade>|null=null;
+ if(fresh){const [c,cal]=await Promise.all([safe(()=>getCandles(env)),safe(getCalendar)]);
+  if(c.ok){const d=c.data as {indicators:Indicators;intraday:Intraday|null;stale:boolean};market=checkTrade(s.side,d.indicators,d.intraday,cal.ok?(cal.data as {events:{title:string;date:string;impact:string}[]}).events:[],d.stale)
+   // A late entry far from the signal price changes the whole risk; more than 10 pips away is flagged.
+   const gap=Math.round(Math.abs(d.indicators.close-s.entry)/0.1);
+   rules.checks.push({key:'entry-gap',label:'Preço atual perto da entrada do sinal (até 10 pips)',ok:gap<=10,detail:`último fechamento M5 ${d.indicators.close} · ${gap} pips da entrada`})}}
+ let saved=false,duplicate=false;
+ if(canSave){
+  try{const row=await saveSignal(env,{source,dedupe_key:dedupeKey,raw:text.slice(0,2000),side:s.side,entry:s.entry,sl:s.sl,tps:s.tps,signal_time:new Date(signalTime).toISOString(),session:rules.session,sl_pips:rules.slPips,adjusted_sl:rules.adjustedSl,checks:[...rules.checks,...(market?.checks??[])]});saved=!!row;duplicate=!row}catch{}
+ }
+ return {ok:true as const,signal:s,rules,market:market&&{verdict:market.verdict,block:market.block,passed:market.passed,total:market.total,checks:market.checks,eventWarning:market.eventWarning},fresh,saved,duplicate,signalTime:new Date(signalTime).toISOString()};
+}
+const verdictText:Record<string,string>={favoravel:'Favorável',ressalvas:'Com ressalvas',desfavoravel:'Desfavorável','nao-operar':'Não operar agora'};
+function telegramReply(r:Awaited<ReturnType<typeof processSignal>>){
+ if(!r.ok)return '⚠️ '+r.error;
+ const s=r.signal, rl=r.rules, f=(v:number)=>v.toFixed(2).replace('.',',');
+ return [
+  `${s.side==='buy'?'🟢 COMPRA':'🔴 VENDA'} ${f(s.entry)} · sessão ${rl.session}`,
+  `SL do sinal: ${f(s.sl)} (${rl.slPips} pips) ${rl.slPips<=rl.cap?'✅ dentro do limite':`❌ acima do seu limite de ${rl.cap}`}`,
+  rl.adjustedSl!==null?`➡️ SL pelas suas regras: ${f(rl.adjustedSl)}`:'',
+  `TP1 ${f(rl.ladder.tp1)} · TP2 ${f(rl.ladder.tp2)} · TP3 ${f(rl.ladder.tp3)} (20/50/80 pips)`,
+  r.market?`Mercado: ${verdictText[r.market.verdict]} (${r.market.passed}/${r.market.total})${r.market.block?' · '+r.market.block:''}`:'Mercado: sinal antigo, checklist ao vivo não aplicado.',
+  r.market?.eventWarning?`⚠️ ${r.market.eventWarning.title} em ${r.market.eventWarning.minutes} min`:'',
+  r.saved?'💾 Registrado; o resultado será acompanhado.':r.duplicate?'ℹ️ Este sinal já estava registrado.':'',
+  'Não é ordem. Confira preço e spread na Exness.'
+ ].filter(Boolean).join('\n');
+}
 // ttl>0 lets the Vercel CDN share a successful response across visitors; errors are never cached.
 const response=(data:unknown,status=200,ttl=0)=>Response.json(data,{status,headers:{'Cache-Control':ttl>0&&status===200?`public, max-age=0, s-maxage=${ttl}`:'private, no-store'}});
 export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response>{
  const path=new URL(request.url).pathname;
- if(path==='/api/config'&&request.method==='GET') return response({aiConfigured:!!env.OPENROUTER_API_KEY,provider:'OpenRouter',model:FREE_MODEL,candlesConfigured:!!env.TWELVEDATA_API_KEY});
+ if(path==='/api/config'&&request.method==='GET') return response({aiConfigured:!!env.OPENROUTER_API_KEY,provider:'OpenRouter',model:FREE_MODEL,candlesConfigured:!!env.TWELVEDATA_API_KEY,dbConfigured:storeEnabled(env)});
+ if(path==='/api/history'){
+  if(request.method!=='GET')return response({error:'Método inválido'},405);
+  if(!storeEnabled(env))return response({error:'Banco de dados não configurado.'},503);
+  if(!authorized(request,env))return response({error:'Senha de acesso inválida.'},401);
+  const candles=await safe(()=>getCandles(env));
+  try{
+   await scoreSignals(env,await scoringBars(env)).catch(()=>{});
+   const [h,sig]=await Promise.all([history(env,candles.ok?(candles.data as {candles:Candle[]}).candles:null),signalHistory(env)]);
+   return response({...h,signals:sig});
+  }
+  catch{return response({error:'Não foi possível ler o histórico no banco.'},502)}
+ }
+ if(path==='/api/signal'){
+  if(request.method!=='POST')return response({error:'Método inválido'},405);
+  if(request.headers.get('origin')!==new URL(request.url).origin)return response({error:'Origem inválida'},403);
+  let body:{text?:unknown;time?:unknown}; try{body=await request.json()}catch{return response({error:'Corpo inválido'},400)}
+  const text=typeof body.text==='string'?body.text.trim():'';
+  if(!text||text.length>2000)return response({error:'Cole o texto do sinal (até 2000 caracteres).'},400);
+  // Optional posting time (ISO) for signals pasted later; defaults to now, never in the future.
+  const t=typeof body.time==='string'?Date.parse(body.time):NaN, signalTime=Number.isFinite(t)&&t<=Date.now()?t:Date.now();
+  const canSave=storeEnabled(env)&&authorized(request,env);
+  const r=await processSignal(env,text,'paste',signalTime,'paste:'+signalTime+':'+text.replace(/\s+/g,' ').slice(0,120),canSave);
+  return response(r,r.ok?200:422);
+ }
+ if(path==='/api/telegram'){
+  if(request.method!=='POST')return response({error:'Método inválido'},405);
+  // Telegram sends this header on every webhook call when setWebhook was given a secret_token.
+  if(!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_WEBHOOK_SECRET||request.headers.get('X-Telegram-Bot-Api-Secret-Token')!==env.TELEGRAM_WEBHOOK_SECRET)return response({error:'Não autorizado'},401);
+  type TgMsg={message_id:number;date:number;text?:string;caption?:string;chat:{id:number};from?:{id:number};forward_origin?:{date:number;chat?:{id:number};message_id?:number}};
+  let update:{message?:TgMsg}; try{update=await request.json()}catch{return response({ok:true})}
+  const m=update.message; if(!m)return response({ok:true});
+  const send=(text:string)=>fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:m.chat.id,text,reply_parameters:{message_id:m.message_id}}),signal:AbortSignal.timeout(8000)}).catch(()=>{});
+  // Until the owner is configured the bot only tells the sender their id; afterwards it ignores everyone else.
+  if(!env.TELEGRAM_OWNER_ID){await send(`Seu ID do Telegram é ${m.from?.id}. Coloque-o em TELEGRAM_OWNER_ID na Vercel para ativar o robô.`);return response({ok:true})}
+  if(String(m.from?.id)!==env.TELEGRAM_OWNER_ID)return response({ok:true});
+  const text=(m.text||m.caption||'').trim();
+  if(!text){await send('Encaminhe a mensagem do sinal (texto).');return response({ok:true})}
+  const o=m.forward_origin, signalTime=(o?.date??m.date)*1000;
+  const key=o?.chat&&o.message_id?`tg:${o.chat.id}:${o.message_id}`:`tg:${m.chat.id}:${m.message_id}`;
+  await send(telegramReply(await processSignal(env,text,'telegram',signalTime,key,storeEnabled(env))));
+  return response({ok:true});
+ }
+ if(path==='/api/check'){
+  if(request.method!=='POST')return response({error:'Método inválido'},405);
+  if(request.headers.get('origin')!==new URL(request.url).origin)return response({error:'Origem inválida'},403);
+  const side=new URL(request.url).searchParams.get('side');
+  if(side!=='buy'&&side!=='sell')return response({error:'Lado inválido'},400);
+  const [candles,calendar]=await Promise.all([safe(()=>getCandles(env)),safe(getCalendar)]);
+  if(!candles.ok)return response({error:'Sem candles M5, a operação não pode ser avaliada.'},503);
+  const c=candles.data as {indicators:Indicators;intraday:Intraday|null;stale:boolean;updatedAt:string};
+  const events=calendar.ok?(calendar.data as {events:{title:string;date:string;impact:string}[]}).events:[];
+  const check=checkTrade(side,c.indicators,c.intraday,events,c.stale);
+  const base={...check,at:new Date().toISOString(),candlesAt:c.updatedAt,calendarOk:calendar.ok};
+  // The explanation is optional: without an OpenRouter key the checklist still answers.
+  const done=async(extra:Record<string,unknown>,model?:string)=>response({...base,...extra,model,saved:await persist(env,request,()=>saveCheck(env,check,model))});
+  let key:string; try{key=requestKey(request,env.OPENROUTER_API_KEY)}catch{return done({explanation:null,explanationError:'Conecte o OpenRouter para receber a explicação da IA.'})}
+  const [quote,cot,news,fed]=await Promise.all([safe(getQuote),safe(getCot),safe(()=>getNews('news')),safe(()=>getNews('fed'))]);
+  try{
+   const r=await generateInsight(key,CHECK_PROMPT,{check,intraday:c.intraday,quote,cot,news,fed,calendar},true);
+   return done({explanation:parseExplanation(r.text)},r.model);
+  }catch(e){return done({explanation:null,explanationError:e instanceof RouterError?e.message:'A IA não respondeu; o checklist acima continua válido.'})}
+ }
  if(path==='/api/insight'||path==='/api/openrouter'){
   if(request.method!=='POST')return response({error:'Método inválido'},405);
   if(request.headers.get('origin')!==new URL(request.url).origin)return response({error:'Origem inválida'},403);
@@ -95,24 +231,26 @@ export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response
   const [quote,cot,news,fed,candles,calendar]=await Promise.all([safe(getQuote),safe(getCot),safe(()=>getNews('news')),safe(()=>getNews('fed')),safe(()=>getCandles(env)),safe(getCalendar)]);
   if(!quote.ok)return response({error:'Sem cotação verificável, a análise está bloqueada.'},503);
   if((quote.data as {stale:boolean}).stale)return response({error:'Cotação desatualizada. Aguarde dados atuais para analisar.'},503);
-  const c=candles.ok?candles.data as {candles:Candle[];indicators:Indicators;intraday:Intraday|null;updatedAt:string;stale:boolean;source:string}:null;
+  const c=candles.ok?candles.data as {candles:Candle[];indicators:Indicators;intraday:Intraday|null;sentiment:Sentiment;updatedAt:string;stale:boolean;source:string}:null;
   const ind=c&&!c.stale?c.indicators:null;
   const at=new Date().toISOString(), horizonEnd=Date.now()+4*3600000;
   const eventSoon=calendar.ok&&(calendar.data as {events:{impact:string;date:string}[]}).events.some(e=>e.impact==='High'&&Date.parse(e.date)>Date.now()&&Date.parse(e.date)<horizonEnd);
   // The model gets computed indicators plus the last 2h of bars, not the full window: fewer tokens, faster free-model replies.
-  const candlesM5=c?{indicators:ind,intraday:ind?c.intraday:null,recent:c.candles.slice(-24),updatedAt:c.updatedAt,stale:c.stale,source:c.source}:candles;
+  const candlesM5=c?{indicators:ind,intraday:ind?c.intraday:null,sentiment:ind?summarize(c.sentiment):null,recent:c.candles.slice(-24),updatedAt:c.updatedAt,stale:c.stale,source:c.source}:candles;
   const context={at,quote,cot,news,fed,candlesM5,calendar,highImpactUsdWithin4h:eventSoon};
   try{
    const result=await generateInsight(key,PROMPT,context,true);
    const bias=parseBias(result.text,ind,eventSoon,ind?c?.intraday?.h1?.trend:undefined);
    if(!bias)return response({error:'O modelo não devolveu a previsão no formato exigido. Nada foi apresentado; tente novamente.'},502);
    const reference=ind&&c?{price:ind.close,time:c.updatedAt,source:'Twelve Data · fechamento M5'}:null;
-   return response({...bias,model:result.model,provider:result.provider,at,reference,eventSoon,indicators:ind});
+   const saved=reference?await persist(env,request,()=>savePrediction(env,bias,reference,result.model)):false;
+   return response({...bias,model:result.model,provider:result.provider,at,reference,eventSoon,indicators:ind,saved});
   }catch(e){return response({error:e instanceof RouterError?e.message:'A conexão com OpenRouter falhou ou excedeu o tempo. Tente mais tarde.'},e instanceof RouterError?e.status:502)}
  }
  const fns:Record<string,()=>Promise<unknown>>={'/api/quote':getQuote,'/api/cot':getCot,'/api/news':()=>getNews('news'),'/api/fed':()=>getNews('fed'),'/api/candles':()=>getCandles(env),'/api/calendar':getCalendar};
  if(!fns[path])return response({error:'Não encontrado'},404);
  if(request.method!=='GET')return response({error:'Método inválido'},405);
- const ttl=path==='/api/candles'?Math.ceil((nextClose()-Date.now())/1000):path==='/api/calendar'?900:0;
+ // The CDN keeps candles exactly as long as this instance's cache, including the short retry window.
+ const ttl=path==='/api/candles'?Math.max(1,Math.ceil(((candlesCache?.until??nextClose())-Date.now())/1000)):path==='/api/calendar'?900:0;
  const result=await safe(fns[path]); return response({...result,checkedAt:new Date().toISOString()},result.ok?200:503,ttl);
 }

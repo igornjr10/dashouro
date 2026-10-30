@@ -48,7 +48,7 @@ def _rows(trades) -> str:
 
 def _cards(title: str, s: dict) -> str:
     return (f"<section class='card'><h3>{title}</h3><div class='kpis'>"
-            f"<div><small>Trades</small><b>{s['trades']}</b></div>"
+            f"<div><small>Trades</small><b>{s['trades']}</b></div><div><small>Spread</small><b>{s['spread_pips']:g} pips</b></div>"
             f"<div><small>Acerto (TP1+)</small><b>{s['taxa_acerto']:.0%}</b></div>"
             f"<div><small>Pips líquidos</small><b class='{'pos' if s['pips_liquidos'] > 0 else 'neg'}'>{s['pips_liquidos']:+.1f}</b></div>"
             f"<div><small>Média por trade</small><b>{s['pips_medio']:+.1f}</b></div>"
@@ -81,7 +81,7 @@ def write(path: Path, m5: list[Bar], res: Result, days_shown: int = 5) -> Path:
     skipped = len(res.skipped)
     page = TEMPLATE.format(
         period=f"{first} → {brt(m5[-1].t)}" if m5 else "-",
-        cards=_cards("Todas as entradas", all_s) + _cards("CRT (H4 01/05/09 NY, entrada no M5)", crt_s) + _cards("Rejeição de nível (killzones) · sem vantagem comprovada", rej_s),
+        cards=_cards("Todas as entradas", all_s) + _cards("CRT (H4 01/05/09 NY, entrada no M5) · sem vantagem comprovada", crt_s) + _cards("Rejeição de nível (killzones) · sem vantagem comprovada", rej_s),
         rows=_rows(res.trades), skipped=skipped,
         profile=_profile_svg(lv) if lv else "<p>Sem perfil.</p>",
         profile_day=brt(last_day)[:5] if last_day else "-",

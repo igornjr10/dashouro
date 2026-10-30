@@ -21,11 +21,13 @@ A chave vem de `TWELVEDATA_API_KEY` (variável de ambiente) ou do `.env.local` d
 
 1 pip = 0,10 USD. Stop 3 pips além da invalidação; se passar de 30 pips (Ásia/Londres) ou 50 (Nova York), a entrada é descartada em vez de apertar o stop. Mínimo de 10 pips. Saída em 3 partes: TP1 20, TP2 50 e TP3 80 pips (ou o alvo do setup, se mais perto); depois do TP1 o stop vai para a entrada. Se um candle toca o stop e um alvo, conta o stop. Operação aberta há mais de 24 h fecha no último preço.
 
-## Resultado atual (01/08 a 30/10/2026, 90 dias)
+## Resultado atual
 
-| Setup | Trades | Acerto (TP1+) | Pips | Maior queda |
-|---|---|---|---|---|
-| CRT com entrada no M5 | 14 | 71% | +122,6 | 52 |
-| Rejeição de nível | 364 | 48% | −199,9 | 990 |
+**1 ano de M5 (30/10/2025 a 30/10/2026, 101.982 candles), com 3 pips de spread por operação:**
 
-O comprimento da quebra de estrutura do CRT (2 candles) foi escolhido nos primeiros 60 dias e conferido nos últimos 30, que a escolha não viu: +44,9 e +77,7 pips. São poucas operações (cerca de uma por semana), então a vantagem ainda não está provada. A rejeição de nível não mostrou vantagem: ganhou nos primeiros 60 dias e perdeu nos 30 seguintes. Spread, slippage e o preço da Exness não estão incluídos.
+| Setup | Trades | Acerto (TP1+) | Pips sem spread | Pips com spread | Maior queda |
+|---|---|---|---|---|---|
+| CRT com entrada no M5 | 49 | 55% | −39 | −186 | 389 |
+| Rejeição de nível | 1226 | 47% | +1460 | −2218 | 2686 |
+
+Nenhum dos dois tem vantagem depois do spread. O resultado positivo dos primeiros 90 dias (CRT +122,6 pips em 14 trades) veio do único trimestre positivo do ano (T4: +127,6; T1 −164,6; T2 −49,9; T3 −99,1). Por sessão, o CRT em Londres teve 9 entradas e +205 pips e em Nova York 40 entradas e −391 pips: como essa separação foi vista depois do resultado, é uma hipótese para testar em conta demo, não uma regra. O spread de 3 pips é uma suposição; confira o real na Exness.

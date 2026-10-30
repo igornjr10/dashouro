@@ -1,6 +1,6 @@
 """Aurum strategy: backtest and today's levels.
 
-  python strategy/run.py                # 90 days of M5, backtest, report at strategy/output/relatorio.html
+  python strategy/run.py                # 365 days of M5, backtest, report at strategy/output/relatorio.html
   python strategy/run.py --dias 60      # longer history (pages back on Twelve Data; ~1 request per 17 days)
   python strategy/run.py --offline      # reuse the local cache, no API request
 """
@@ -19,7 +19,7 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description="Estratégia Aurum para XAU/USD")
-    ap.add_argument("--dias", type=int, default=90)
+    ap.add_argument("--dias", type=int, default=365)
     ap.add_argument("--offline", action="store_true", help="usa só o cache local")
     args = ap.parse_args()
 
@@ -33,7 +33,7 @@ def main() -> None:
     for name, trades in (("Todas", res.trades), ("CRT", [t for t in res.trades if t.setup == "CRT"]), ("Rejeição", [t for t in res.trades if t.setup == "Rejeição"])):
         s = backtest.stats(trades)
         print(f"  {name:9s} trades {s['trades']:3d} | acerto {s['taxa_acerto']:.0%} | pips {s['pips_liquidos']:+.1f} | média {s['pips_medio']:+.1f} | maior queda {s['maior_queda_pips']:.0f} | stop médio {s['risco_medio_pips']:.0f}")
-    print(f"  Descartados pelas regras: {len(res.skipped)}")
+    print(f"  Descartados pelas regras: {len(res.skipped)} · resultados já descontam {backtest.config.SPREAD_PIPS} pips de spread por operação")
 
     lv = res.day_levels.get(utc_day(m5[-1].t))
     if lv:

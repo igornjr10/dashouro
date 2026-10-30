@@ -1,6 +1,7 @@
 """Runs both setups over history, one open trade per setup at a time, and summarizes the results."""
 from dataclasses import dataclass, field
 
+from . import config
 from . import levels as lvmod
 from .data import Bar
 from .setups import crt_signals, rejection_signal
@@ -51,17 +52,21 @@ def run(m5: list[Bar]) -> Result:
     return res
 
 
-def stats(trades: list[Trade]) -> dict:
+def stats(trades: list[Trade], spread: float | None = None) -> dict:
+    """Results net of the spread: every closed trade pays `spread` pips (default config.SPREAD_PIPS)."""
+    cost = config.SPREAD_PIPS if spread is None else spread
     closed = [t for t in trades if t.status != "open"]
-    wins = [t for t in closed if t.result_pips > 0]
+    net_of = lambda t: t.result_pips - cost
+    wins = [t for t in closed if net_of(t) > 0]
     losses = [t for t in closed if t.status == "sl"]
     net, peak, dd = 0.0, 0.0, 0.0
     for t in closed:
-        net += t.result_pips
+        net += net_of(t)
         peak = max(peak, net)
         dd = max(dd, peak - net)
     risk = [t.sl_pips for t in closed]
     return {
+        "spread_pips": cost,
         "trades": len(closed),
         "abertos": len(trades) - len(closed),
         "ganhos": len(wins),

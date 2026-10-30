@@ -14,6 +14,9 @@ STOP_BUFFER = 3
 # Take-profit ladder in pips. TP1 moves the stop to break-even.
 TP1, TP2, TP3 = 20, 50, 80
 
+# Round-trip cost per trade in pips. An assumption, not a measured Exness spread; check the real one in the terminal.
+SPREAD_PIPS = 3
+
 # A trade still open after this long is closed at its best rung reached (or 0 if none).
 MAX_HOLD_HOURS = 24
 

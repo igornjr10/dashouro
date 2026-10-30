@@ -44,6 +44,6 @@ export function CrtCard({list}:{list:CrtSetup[]|undefined}){
     {e.layer&&<div className="rule-row rule-layer"><small>Camada de proteção</small><strong>{num(e.layer.from)} – {num(e.layer.to)}</strong><em>mesmo lote, mesmo SL</em></div>}
    </div>}
   </div>
-  <div className="panel-note">CRT: o H4 que abre às 01h, 05h ou 09h de Nova York varre a máxima ou a mínima do H4 anterior e fecha de volta dentro; a entrada é no M5, na primeira quebra de estrutura a favor, durante o H4 seguinte. Backtest de 90 dias (ago–out/2026): 14 entradas, 71% chegaram ao TP1, +122,6 pips sem spread. Amostra pequena: ainda não é vantagem comprovada. Não é ordem; confira preço e spread na Exness.</div>
+  <div className="panel-note">CRT: o H4 que abre às 01h, 05h ou 09h de Nova York varre a máxima ou a mínima do H4 anterior e fecha de volta dentro; a entrada é no M5, na primeira quebra de estrutura a favor, durante o H4 seguinte. Backtest de 1 ano (out/2025–out/2026): 49 entradas, 55% chegaram ao TP1, −186 pips com 3 pips de spread. Sem vantagem comprovada: use como leitura do mercado, não como sinal. Em Londres foram 9 entradas e +205 pips, uma hipótese a observar sem dinheiro. Não é ordem; confira preço e spread na Exness.</div>
  </section>;
 }

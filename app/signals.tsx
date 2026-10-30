@@ -52,7 +52,7 @@ function StatsBox({title,s}:{title:string;s:Stats}){
 }
 
 // compact: the Overview version, a quick paste box without the history; onResult lets the page draw the signal on the chart.
-export function SignalsPanel({getHeaders,history,synced,onSaved,compact=false,onResult}:{getHeaders:()=>Record<string,string>;history:SignalHistory|null;synced:boolean;onSaved:()=>void;compact?:boolean;onResult?:(r:Result)=>void}){
+export function SignalsPanel({getHeaders,history,synced,onSaved,compact=false,onResult,locked=false}:{getHeaders:()=>Record<string,string>;history:SignalHistory|null;synced:boolean;onSaved:()=>void;compact?:boolean;onResult?:(r:Result)=>void;locked?:boolean}){
  const [text,setText]=useState(''),[time,setTime]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[result,setResult]=useState<Result|null>(null);
  const submit=async()=>{setBusy(true);setError('');setResult(null);try{
   const r=await fetch('/api/signal',{method:'POST',headers:{'Content-Type':'application/json',...getHeaders()},body:JSON.stringify({text,time:time?new Date(time).toISOString():undefined})});
@@ -65,7 +65,7 @@ export function SignalsPanel({getHeaders,history,synced,onSaved,compact=false,on
    <div className="signal-form">
     <textarea value={text} onChange={e=>setText(e.target.value)} rows={compact?5:7} maxLength={2000} placeholder={'Cole o sinal, por exemplo:\nGold buy 4019\nSL 4014\nTP 4025\nTP 4030\nTP 4100'}/>
     {!compact&&<label className="small muted">Horário do sinal (deixe vazio se acabou de chegar)<input type="datetime-local" value={time} onChange={e=>setTime(e.target.value)}/></label>}
-    <button className="button gold-button" disabled={busy||!text.trim()} onClick={submit}>{busy?<Loader2 size={16} className="spin"/>:<Check size={16}/>}Avaliar pelas minhas regras</button>
+    <button className="button gold-button" disabled={busy||!text.trim()||locked} onClick={submit}>{busy?<Loader2 size={16} className="spin"/>:<Check size={16}/>}Avaliar pelas minhas regras</button>
     {error&&<p role="alert" className="connection-error">{error}</p>}
    </div>
    {r&&rl&&<div className="signal-result">

@@ -1,13 +1,14 @@
 import {checkRouterKey,generateInsight,requestKey,RouterError,FREE_MODEL} from './openrouter';
 import {indicators,intraday,intradayLevels,parseBias,type Candle,type Indicators,type Intraday} from './indicators';
 import {checkTrade} from './trade-check';
-import {authorized,history,saveCheck,savePrediction,storeEnabled,type StoreEnv} from './store';
+import {authorized,history,saveCheck,savePrediction,saveSignal,scoreSignals,signalHistory,storeEnabled,type StoreEnv} from './store';
+import {parseSignal,ruleCheck} from './signals';
 // Saving is best effort: a database failure never blocks the analysis the user asked for.
 const persist=async(env:RuntimeEnv,request:Request,write:()=>Promise<unknown>)=>{
  if(!storeEnabled(env)||!authorized(request,env))return false;
  try{await write();return true}catch{return false}
 };
-export type RuntimeEnv = { OPENROUTER_API_KEY?: string; TWELVEDATA_API_KEY?: string } & StoreEnv;
+export type RuntimeEnv = { OPENROUTER_API_KEY?: string; TWELVEDATA_API_KEY?: string; TELEGRAM_BOT_TOKEN?: string; TELEGRAM_WEBHOOK_SECRET?: string; TELEGRAM_OWNER_ID?: string } & StoreEnv;
 const links = {
  quote: 'https://api.gold-api.com/price/XAU',
  cot: 'https://publicreporting.cftc.gov/resource/72hh-3qpy.json?' + new URLSearchParams({'$where':"cftc_contract_market_code='088691'",'$order':'report_date_as_yyyy_mm_dd DESC','$limit':'2','$select':'report_date_as_yyyy_mm_dd,m_money_positions_long_all,m_money_positions_short_all,open_interest_all'}),
@@ -99,6 +100,46 @@ function parseExplanation(text:string){
  }catch{return null}
 }
 async function safe(fn:()=>Promise<unknown>){try{return {ok:true,data:await fn()}}catch(e){return {ok:false,error:e instanceof Error?e.message:'Fonte indisponível'}}}
+// H1 bars before the M5 window plus the M5 window: enough history to score signals up to ~5 days old.
+async function scoringBars(env:RuntimeEnv):Promise<Candle[]>{
+ const [m5,h1]=await Promise.all([safe(()=>getCandles(env)),getH1(env).catch(()=>[] as Candle[])]);
+ const m=m5.ok?(m5.data as {candles:Candle[]}).candles:[];
+ return [...h1.filter(b=>!m.length||b.time+3600000<=m[0].time),...m];
+}
+// Parses, checks against Igor's rules and the current market, and stores (when allowed). Shared by paste and Telegram.
+async function processSignal(env:RuntimeEnv,text:string,source:'paste'|'telegram',signalTime:number,dedupeKey:string,canSave:boolean){
+ const p=parseSignal(text);
+ if('error' in p)return {ok:false as const,error:p.error};
+ const s=p.signal, rules=ruleCheck(s,signalTime);
+ // The market checklist only means something while the signal is fresh.
+ const fresh=Date.now()-signalTime<30*60000;
+ let market:ReturnType<typeof checkTrade>|null=null;
+ if(fresh){const [c,cal]=await Promise.all([safe(()=>getCandles(env)),safe(getCalendar)]);
+  if(c.ok){const d=c.data as {indicators:Indicators;intraday:Intraday|null;stale:boolean};market=checkTrade(s.side,d.indicators,d.intraday,cal.ok?(cal.data as {events:{title:string;date:string;impact:string}[]}).events:[],d.stale)
+   // A late entry far from the signal price changes the whole risk; more than 10 pips away is flagged.
+   const gap=Math.round(Math.abs(d.indicators.close-s.entry)/0.1);
+   rules.checks.push({key:'entry-gap',label:'Preço atual perto da entrada do sinal (até 10 pips)',ok:gap<=10,detail:`último fechamento M5 ${d.indicators.close} · ${gap} pips da entrada`})}}
+ let saved=false,duplicate=false;
+ if(canSave){
+  try{const row=await saveSignal(env,{source,dedupe_key:dedupeKey,raw:text.slice(0,2000),side:s.side,entry:s.entry,sl:s.sl,tps:s.tps,signal_time:new Date(signalTime).toISOString(),session:rules.session,sl_pips:rules.slPips,adjusted_sl:rules.adjustedSl,checks:[...rules.checks,...(market?.checks??[])]});saved=!!row;duplicate=!row}catch{}
+ }
+ return {ok:true as const,signal:s,rules,market:market&&{verdict:market.verdict,block:market.block,passed:market.passed,total:market.total,checks:market.checks,eventWarning:market.eventWarning},fresh,saved,duplicate,signalTime:new Date(signalTime).toISOString()};
+}
+const verdictText:Record<string,string>={favoravel:'Favorável',ressalvas:'Com ressalvas',desfavoravel:'Desfavorável','nao-operar':'Não operar agora'};
+function telegramReply(r:Awaited<ReturnType<typeof processSignal>>){
+ if(!r.ok)return '⚠️ '+r.error;
+ const s=r.signal, rl=r.rules, f=(v:number)=>v.toFixed(2).replace('.',',');
+ return [
+  `${s.side==='buy'?'🟢 COMPRA':'🔴 VENDA'} ${f(s.entry)} · sessão ${rl.session}`,
+  `SL do sinal: ${f(s.sl)} (${rl.slPips} pips) ${rl.slPips<=rl.cap?'✅ dentro do limite':`❌ acima do seu limite de ${rl.cap}`}`,
+  rl.adjustedSl!==null?`➡️ SL pelas suas regras: ${f(rl.adjustedSl)}`:'',
+  `TP1 ${f(rl.ladder.tp1)} · TP2 ${f(rl.ladder.tp2)} · TP3 ${f(rl.ladder.tp3)} (20/50/80 pips)`,
+  r.market?`Mercado: ${verdictText[r.market.verdict]} (${r.market.passed}/${r.market.total})${r.market.block?' · '+r.market.block:''}`:'Mercado: sinal antigo, checklist ao vivo não aplicado.',
+  r.market?.eventWarning?`⚠️ ${r.market.eventWarning.title} em ${r.market.eventWarning.minutes} min`:'',
+  r.saved?'💾 Registrado; o resultado será acompanhado.':r.duplicate?'ℹ️ Este sinal já estava registrado.':'',
+  'Não é ordem. Confira preço e spread na Exness.'
+ ].filter(Boolean).join('\n');
+}
 // ttl>0 lets the Vercel CDN share a successful response across visitors; errors are never cached.
 const response=(data:unknown,status=200,ttl=0)=>Response.json(data,{status,headers:{'Cache-Control':ttl>0&&status===200?`public, max-age=0, s-maxage=${ttl}`:'private, no-store'}});
 export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response>{
@@ -109,8 +150,42 @@ export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response
   if(!storeEnabled(env))return response({error:'Banco de dados não configurado.'},503);
   if(!authorized(request,env))return response({error:'Senha de acesso inválida.'},401);
   const candles=await safe(()=>getCandles(env));
-  try{return response(await history(env,candles.ok?(candles.data as {candles:Candle[]}).candles:null))}
+  try{
+   await scoreSignals(env,await scoringBars(env)).catch(()=>{});
+   const [h,sig]=await Promise.all([history(env,candles.ok?(candles.data as {candles:Candle[]}).candles:null),signalHistory(env)]);
+   return response({...h,signals:sig});
+  }
   catch{return response({error:'Não foi possível ler o histórico no banco.'},502)}
+ }
+ if(path==='/api/signal'){
+  if(request.method!=='POST')return response({error:'Método inválido'},405);
+  if(request.headers.get('origin')!==new URL(request.url).origin)return response({error:'Origem inválida'},403);
+  let body:{text?:unknown;time?:unknown}; try{body=await request.json()}catch{return response({error:'Corpo inválido'},400)}
+  const text=typeof body.text==='string'?body.text.trim():'';
+  if(!text||text.length>2000)return response({error:'Cole o texto do sinal (até 2000 caracteres).'},400);
+  // Optional posting time (ISO) for signals pasted later; defaults to now, never in the future.
+  const t=typeof body.time==='string'?Date.parse(body.time):NaN, signalTime=Number.isFinite(t)&&t<=Date.now()?t:Date.now();
+  const canSave=storeEnabled(env)&&authorized(request,env);
+  const r=await processSignal(env,text,'paste',signalTime,'paste:'+signalTime+':'+text.replace(/\s+/g,' ').slice(0,120),canSave);
+  return response(r,r.ok?200:422);
+ }
+ if(path==='/api/telegram'){
+  if(request.method!=='POST')return response({error:'Método inválido'},405);
+  // Telegram sends this header on every webhook call when setWebhook was given a secret_token.
+  if(!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_WEBHOOK_SECRET||request.headers.get('X-Telegram-Bot-Api-Secret-Token')!==env.TELEGRAM_WEBHOOK_SECRET)return response({error:'Não autorizado'},401);
+  type TgMsg={message_id:number;date:number;text?:string;caption?:string;chat:{id:number};from?:{id:number};forward_origin?:{date:number;chat?:{id:number};message_id?:number}};
+  let update:{message?:TgMsg}; try{update=await request.json()}catch{return response({ok:true})}
+  const m=update.message; if(!m)return response({ok:true});
+  const send=(text:string)=>fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:m.chat.id,text,reply_parameters:{message_id:m.message_id}}),signal:AbortSignal.timeout(8000)}).catch(()=>{});
+  // Until the owner is configured the bot only tells the sender their id; afterwards it ignores everyone else.
+  if(!env.TELEGRAM_OWNER_ID){await send(`Seu ID do Telegram é ${m.from?.id}. Coloque-o em TELEGRAM_OWNER_ID na Vercel para ativar o robô.`);return response({ok:true})}
+  if(String(m.from?.id)!==env.TELEGRAM_OWNER_ID)return response({ok:true});
+  const text=(m.text||m.caption||'').trim();
+  if(!text){await send('Encaminhe a mensagem do sinal (texto).');return response({ok:true})}
+  const o=m.forward_origin, signalTime=(o?.date??m.date)*1000;
+  const key=o?.chat&&o.message_id?`tg:${o.chat.id}:${o.message_id}`:`tg:${m.chat.id}:${m.message_id}`;
+  await send(telegramReply(await processSignal(env,text,'telegram',signalTime,key,storeEnabled(env))));
+  return response({ok:true});
  }
  if(path==='/api/check'){
   if(request.method!=='POST')return response({error:'Método inválido'},405);

@@ -1,5 +1,6 @@
 'use client';
 import {useState,useEffect,useMemo,useCallback} from 'react';
+import type {SignalHistory} from './signals';
 import {AlertTriangle,ArrowDownRight,ArrowUpRight,Minus,Target,Trash2} from 'lucide-react';
 
 export type Level='high2h'|'low2h'|'highWindow'|'lowWindow'|'ema20'|'ema50'|'pdh'|'pdl'|'pdc'|'asiaHigh'|'asiaLow'|'londonHigh'|'londonLow';
@@ -37,7 +38,7 @@ const store=(list:Prediction[])=>{try{localStorage.setItem(KEY,JSON.stringify(li
 
 type Rate={total:number;hits:number};
 export type CheckRow={id:string;created_at:string;side:'buy'|'sell';verdict:string;passed:number;total:number;price:number;stop_price:number;target_price:number|null;rr:number|null;block:string|null};
-type Remote={list:Prediction[];checks:CheckRow[];stats:{overall:Rate;byBias:Record<string,Rate>;byConfidence:Record<string,Rate>}};
+type Remote={list:Prediction[];checks:CheckRow[];signals:SignalHistory|null;stats:{overall:Rate;byBias:Record<string,Rate>;byConfidence:Record<string,Rate>}};
 type ServerRow={created_at:string;bias:Prediction['bias'];confidence:Prediction['confidence'];horizon_hours:number;ref_price:number;ref_time:string;model:string|null;status:string;result_price:number|null;result_move:number|null;hit:boolean|null};
 const fromServer=(r:ServerRow):Prediction=>({at:r.created_at,bias:r.bias,confidence:r.confidence,horizonHours:r.horizon_hours,refPrice:Number(r.ref_price),refTime:r.ref_time,model:r.model||'',
  result:r.status==='pending'?undefined:r.status==='unchecked'?'unchecked':{price:Number(r.result_price),move:Number(r.result_move),hit:!!r.hit}});
@@ -50,8 +51,8 @@ export function usePredictions(candles:Candle[]|null,access=''){
  useEffect(()=>{setSaved(load()||[])},[]);
  const sync=useCallback(async()=>{
   if(!access){setRemote(null);setSyncError('');return}
-  try{const r=await fetch('/api/history',{headers:{'X-Aurum-Access':access},cache:'no-store'});const j=await r.json() as {error?:string;predictions:ServerRow[];checks:CheckRow[];stats:Remote['stats']};if(!r.ok)throw new Error(j.error);
-   setRemote({list:(j.predictions as ServerRow[]).map(fromServer),checks:j.checks,stats:j.stats});setSyncError('')}
+  try{const r=await fetch('/api/history',{headers:{'X-Aurum-Access':access},cache:'no-store'});const j=await r.json() as {error?:string;predictions:ServerRow[];checks:CheckRow[];stats:Remote['stats'];signals?:SignalHistory};if(!r.ok)throw new Error(j.error);
+   setRemote({list:(j.predictions as ServerRow[]).map(fromServer),checks:j.checks,stats:j.stats,signals:j.signals??null});setSyncError('')}
   catch(e){setRemote(null);setSyncError(e instanceof Error?e.message:'Falha ao ler o histórico.')}
  },[access]);
  // Re-sync when the token changes and on each M5 refresh, which is when the server can score pending predictions.

@@ -1,4 +1,5 @@
 import type {Candle} from './indicators';
+import {scoreSignal} from './signals';
 import type {Bias} from './indicators';
 import type {TradeCheck} from './trade-check';
 
@@ -53,4 +54,38 @@ export async function history(env:StoreEnv,candles:Candle[]|null){
  const rate=(rows:{hit:boolean}[])=>({total:rows.length,hits:rows.filter(r=>r.hit).length});
  const group=(k:'bias'|'confidence')=>Object.fromEntries([...new Set(scored.map(r=>r[k]))].map(v=>[v,rate(scored.filter(r=>r[k]===v))]));
  return {predictions,checks,stats:{overall:rate(scored),byBias:group('bias'),byConfidence:group('confidence')}};
+}
+
+type SignalRow={id:string;side:'buy'|'sell';entry:number;sl:number;adjusted_sl:number|null;signal_time:string;status:string;my_status:string};
+// Returns the stored row, or null when this dedupe key was already saved (the same Telegram message forwarded twice).
+export async function saveSignal(env:StoreEnv,row:Record<string,unknown>){
+ const r=await rest(env,'signals?on_conflict=dedupe_key',{method:'POST',body:JSON.stringify(row),headers:{Prefer:'resolution=ignore-duplicates,return=representation'}}) as unknown[]|null;
+ return r?.[0]??null;
+}
+// Scores open signals twice: as posted, and with Igor's session-capped SL when the signal's SL was wider.
+export async function scoreSignals(env:StoreEnv,bars:Candle[]){
+ if(!bars.length)return;
+ const open=await rest(env,"signals?or=(status.eq.open,my_status.eq.open)&select=id,side,entry,sl,adjusted_sl,signal_time,status,my_status&limit=100",{headers:{Prefer:''}}) as SignalRow[];
+ await Promise.all(open.map(s=>{
+  const base={side:s.side,entry:Number(s.entry),signalTime:Date.parse(s.signal_time)};
+  const theirs=scoreSignal({...base,sl:Number(s.sl)},bars), mine=s.adjusted_sl===null?theirs:scoreSignal({...base,sl:Number(s.adjusted_sl)},bars);
+  const patch:Record<string,unknown>={max_pips:theirs.maxPips,tp1_at:theirs.tp1At};
+  if(s.status==='open'&&theirs.status!=='open')Object.assign(patch,{status:theirs.status,result_pips:theirs.resultPips,closed_at:theirs.closedAt});
+  if(s.my_status==='open'&&mine.status!=='open')Object.assign(patch,{my_status:mine.status,my_result_pips:mine.resultPips,my_closed_at:mine.closedAt});
+  return rest(env,'signals?id=eq.'+s.id,{method:'PATCH',body:JSON.stringify(patch)});
+ }));
+}
+type Closed={status:string;result_pips:number|null;my_status:string;my_result_pips:number|null};
+export async function signalHistory(env:StoreEnv){
+ const [list,closed]=await Promise.all([
+  rest(env,'signals?select=id,created_at,source,side,entry,sl,tps,signal_time,session,sl_pips,adjusted_sl,checks,status,max_pips,result_pips,my_status,my_result_pips&order=signal_time.desc&limit=30',{headers:{Prefer:''}}),
+  rest(env,'signals?select=status,result_pips,my_status,my_result_pips&order=signal_time.desc&limit=1000',{headers:{Prefer:''}}),
+ ]) as [unknown[],Closed[]];
+ // TP1 then a stop at break-even is a win by the partner's own rule, so "SL" only counts stops before TP1.
+ const stats=(pick:(r:Closed)=>[string,number|null])=>{
+  const rows=closed.map(pick).filter(([s])=>s!=='open');
+  const by=(k:string)=>rows.filter(([s])=>s===k).length;
+  return {closed:rows.length,sl:by('sl'),tp1:by('tp1'),tp2:by('tp2'),tp3:by('tp3'),expired:by('expired'),pips:Math.round(rows.reduce((a,[,p])=>a+(p??0),0))};
+ };
+ return {list,stats:{theirs:stats(r=>[r.status,r.result_pips]),mine:stats(r=>[r.my_status,r.my_result_pips])}};
 }

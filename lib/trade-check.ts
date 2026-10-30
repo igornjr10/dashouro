@@ -4,7 +4,7 @@ export type Side='buy'|'sell';
 type Check={key:string;label:string;ok:boolean;detail:string};
 const names:Partial<Record<Level,string>>={high2h:'máxima 2h',low2h:'mínima 2h',highWindow:'máxima da janela M5',lowWindow:'mínima da janela M5',pdh:'máxima de ontem',pdl:'mínima de ontem',pdc:'fechamento de ontem',asiaHigh:'máxima da Ásia',asiaLow:'mínima da Ásia',londonHigh:'máxima de Londres',londonLow:'mínima de Londres'};
 const round=(v:number)=>Math.round(v*100)/100;
-const BLOCK_MS=30*60000, WARN_MS=4*3600000;
+const BLOCK_MS=30*60000, WARN_MS=4*3600000, AFTER_MS=15*60000;
 // Igor's gold convention: 1 pip = 0.10 USD; 1 standard lot = 100 oz, so 1 pip = 10 USD per lot.
 const PIP=0.1, USD_PER_PIP_LOT=10, STOP_BUFFER=3, MIN_SL=25;
 // UTC session hours, same approximation as the intraday levels; 21–24h UTC counts as Asia (Sydney/Tokyo open).
@@ -42,7 +42,9 @@ export function checkTrade(side:Side, ind:Indicators, day:Intraday|null, events:
   {key:'stop',label:`Stop técnico cabe no limite da sessão (${cap} pips)`,ok:techPips!==null&&techPips<=cap,detail:techPips===null?'sem nível de proteção atrás do preço':`stop técnico em ${techPips} pips (${names[behind![0]]})`},
  ];
  const passed=checks.filter(c=>c.ok).length;
- const block=stale?'Candles desatualizados.':until!==null&&until<=BLOCK_MS?`${nextEvent!.title} em ${Math.ceil(until/60000)} min.`:null;
+ // Gold spikes for several minutes after a high-impact release, so the block also covers the 15 min after it.
+ const justOut=events.filter(e=>e.impact==='High'&&now-Date.parse(e.date)>=0&&now-Date.parse(e.date)<AFTER_MS).sort((a,b)=>Date.parse(b.date)-Date.parse(a.date))[0];
+ const block=stale?'Candles desatualizados.':justOut?`${justOut.title} saiu há ${Math.floor((now-Date.parse(justOut.date))/60000)} min.`:until!==null&&until<=BLOCK_MS?`${nextEvent!.title} em ${Math.ceil(until/60000)} min.`:null;
  const eventAhead=!block&&until!==null&&until<=WARN_MS;
  // A high-impact release inside the next 4h can erase any technical edge, so it caps the verdict at "ressalvas".
  const verdict=block?'nao-operar':passed>=5&&!eventAhead?'favoravel':passed>=3?'ressalvas':'desfavoravel';

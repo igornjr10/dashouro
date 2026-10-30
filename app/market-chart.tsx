@@ -125,10 +125,10 @@ export function MarketChart({series,levels,insight,predictions,events,plan,live}
   // A prediction is pinned to the bar it was made on; only bars inside the window can carry a marker.
   const first=candles[0].time;
   a.priceMarks.setMarkers(on.predictions?predictions.map(p=>({p,t:slot(Date.parse(p.refTime)-300000)})).filter(({t})=>t>=first&&t<=lastOpen).sort((x,y)=>x.t-y.t).map(({p,t})=>{
-   const r=p.result&&p.result!=='unchecked'?(p.result.hit?' ✓':' ✗'):'';
-   return p.bias==='alta'?{time:sec(t),position:'belowBar' as const,shape:'arrowUp' as const,color:'#7ac5a7',text:'Alta'+r}
-    :p.bias==='baixa'?{time:sec(t),position:'aboveBar' as const,shape:'arrowDown' as const,color:'#c8867e',text:'Baixa'+r}
-    :{time:sec(t),position:'aboveBar' as const,shape:'circle' as const,color:'#d8b875',text:'Neutro'+r};
+   const r=p.result&&p.result!=='unchecked'?(p.result.hit?' ✓':' ✗'):'', h=p.horizonHours+'h ';
+   return p.bias==='alta'?{time:sec(t),position:'belowBar' as const,shape:'arrowUp' as const,color:'#7ac5a7',text:h+'Alta'+r}
+    :p.bias==='baixa'?{time:sec(t),position:'aboveBar' as const,shape:'arrowDown' as const,color:'#c8867e',text:h+'Baixa'+r}
+    :{time:sec(t),position:'aboveBar' as const,shape:'circle' as const,color:'#d8b875',text:h+'Neutro'+r};
   }):[]);
   // Only a timeframe change (or the first draw) moves the view; later updates keep the user's zoom and scroll.
   if(shownTf.current!==tf){

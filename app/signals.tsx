@@ -37,6 +37,7 @@ export function RulesCard({now}:{now:number}){
 }
 
 type Rules={session:string;cap:number;slPips:number;firstTpPips:number;adjustedSl:number|null;ladder:{tp1:number;tp2:number;tp3:number};checks:{key:string;label:string;ok:boolean;detail:string}[]};
+export type SignalResult=Result;
 type Result={ok:true;signal:{side:'buy'|'sell';entry:number;sl:number;tps:number[]};rules:Rules;market:{verdict:string;block:string|null;passed:number;total:number;checks:{key:string;label:string;ok:boolean;detail:string}[];eventWarning:{title:string;minutes:number}|null}|null;fresh:boolean;saved:boolean;duplicate:boolean;signalTime:string};
 export type SignalRow={id:string;source:string;side:'buy'|'sell';entry:number;sl:number;adjusted_sl:number|null;signal_time:string;session:string;sl_pips:number;status:string;max_pips:number|null;result_pips:number|null;my_status:string;my_result_pips:number|null};
 type Stats={closed:number;sl:number;tp1:number;tp2:number;tp3:number;expired:number;pips:number};
@@ -50,19 +51,20 @@ function StatsBox({title,s}:{title:string;s:Stats}){
  return <div className="signal-stats"><small>{title}</small><strong>{s.closed?`${Math.round(wins/s.closed*100)}% com TP1+`:'—'}</strong><em>{s.closed} fechados · {s.sl} SL · TP1 {s.tp1} · TP2 {s.tp2} · TP3 {s.tp3} · {s.pips>0?'+':''}{s.pips} pips</em></div>;
 }
 
-export function SignalsPanel({getHeaders,history,synced,onSaved}:{getHeaders:()=>Record<string,string>;history:SignalHistory|null;synced:boolean;onSaved:()=>void}){
+// compact: the Overview version, a quick paste box without the history; onResult lets the page draw the signal on the chart.
+export function SignalsPanel({getHeaders,history,synced,onSaved,compact=false,onResult}:{getHeaders:()=>Record<string,string>;history:SignalHistory|null;synced:boolean;onSaved:()=>void;compact?:boolean;onResult?:(r:Result)=>void}){
  const [text,setText]=useState(''),[time,setTime]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[result,setResult]=useState<Result|null>(null);
  const submit=async()=>{setBusy(true);setError('');setResult(null);try{
   const r=await fetch('/api/signal',{method:'POST',headers:{'Content-Type':'application/json',...getHeaders()},body:JSON.stringify({text,time:time?new Date(time).toISOString():undefined})});
-  const j=await r.json() as Result|{ok:false;error?:string};if(!j.ok)throw new Error(j.error||'Falha ao avaliar o sinal.');setResult(j);if(j.saved)onSaved();
+  const j=await r.json() as Result|{ok:false;error?:string};if(!j.ok)throw new Error(j.error||'Falha ao avaliar o sinal.');setResult(j);onResult?.(j);if(j.saved)onSaved();
  }catch(e){setError(e instanceof Error?e.message:'Falha ao avaliar o sinal.')}finally{setBusy(false)}};
  const r=result, rl=r?.rules;
  return <>
-  <section className="panel signal-input">
-   <div className="panel-heading"><h2><Send size={17}/>Avaliar sinal do parceiro</h2><span className="micro">{synced?'SALVA NO BANCO':'SEM BANCO: SÓ AVALIA'}</span></div>
+  <section className={"panel signal-input"+(compact?" signal-compact":"")}>
+   <div className="panel-heading"><h2><Send size={17}/>{compact?"Chegou um sinal? Cole aqui":"Avaliar sinal do parceiro"}</h2><span className="micro">{synced?'SALVA NO BANCO':'SEM BANCO: SÓ AVALIA'}</span></div>
    <div className="signal-form">
-    <textarea value={text} onChange={e=>setText(e.target.value)} rows={7} maxLength={2000} placeholder={'Cole o sinal, por exemplo:\nGold buy 4019\nSL 4014\nTP 4025\nTP 4030\nTP 4100'}/>
-    <label className="small muted">Horário do sinal (deixe vazio se acabou de chegar)<input type="datetime-local" value={time} onChange={e=>setTime(e.target.value)}/></label>
+    <textarea value={text} onChange={e=>setText(e.target.value)} rows={compact?5:7} maxLength={2000} placeholder={'Cole o sinal, por exemplo:\nGold buy 4019\nSL 4014\nTP 4025\nTP 4030\nTP 4100'}/>
+    {!compact&&<label className="small muted">Horário do sinal (deixe vazio se acabou de chegar)<input type="datetime-local" value={time} onChange={e=>setTime(e.target.value)}/></label>}
     <button className="button gold-button" disabled={busy||!text.trim()} onClick={submit}>{busy?<Loader2 size={16} className="spin"/>:<Check size={16}/>}Avaliar pelas minhas regras</button>
     {error&&<p role="alert" className="connection-error">{error}</p>}
    </div>
@@ -80,7 +82,7 @@ export function SignalsPanel({getHeaders,history,synced,onSaved}:{getHeaders:()=
     <div className="panel-note">{r.saved?'Registrado no banco: o resultado será acompanhado com os candles.':r.duplicate?'Este sinal já estava registrado.':synced?'Não foi possível registrar no banco.':'Sincronize o placar com a senha de acesso para registrar e acompanhar.'} Não é ordem; confira preço e spread na Exness.</div>
    </div>}
   </section>
-  {history&&<section className="panel signal-history">
+  {!compact&&history&&<section className="panel signal-history">
    <div className="panel-heading"><h2><ClipboardList size={17}/>Placar do parceiro</h2><span className="micro">{history.list.length} SINAIS RECENTES</span></div>
    <div className="signal-stats-row"><StatsBox title="COMO O SINAL VEIO" s={history.stats.theirs}/><StatsBox title="COM AS SUAS REGRAS (SL DA SESSÃO)" s={history.stats.mine}/></div>
    <div className="score-list">{history.list.slice(0,12).map(s=><div key={s.id} className="score-row">
@@ -90,6 +92,6 @@ export function SignalsPanel({getHeaders,history,synced,onSaved}:{getHeaders:()=
    </div>)}</div>
    <div className="panel-note">Resultado medido pelos candles da Twelve Data, pela escada de 20/50/80 pips: TP1 move o stop para o BE, e TP1 seguido de stop no BE conta como TP1, não como SL. Se um mesmo candle toca o stop e o TP1, conta como stop. A entrada é considerada executada no preço do sinal.</div>
   </section>}
-  {!history&&<div className="panel-note">Sincronize o placar (senha de acesso) para registrar sinais e ver o placar do parceiro.</div>}
+  {!compact&&!history&&<div className="panel-note">Sincronize o placar (senha de acesso) para registrar sinais e ver o placar do parceiro.</div>}
  </>;
 }

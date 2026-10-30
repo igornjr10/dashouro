@@ -70,3 +70,4 @@ iframe.chart-embed{width:100%;height:100%;border:0}.modal{max-height:90dvh;overf
 .bias-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 19px 0}.bias-pair .bias-card{margin:0;flex-direction:column;align-items:flex-start}.bias-pair .bias-drivers{margin:4px 0 0 18px}.bias-pair .bias-warning{margin:0}
 .bias-split{margin:12px 19px 0;padding:9px 12px;border:1px dashed #6b5a32;border-radius:6px;font-size:12px;color:#d3c99f}
 @media(max-width:760px){.bias-pair{grid-template-columns:1fr;margin:14px 14px 0}}
+.signal-compact{margin-top:16px}.signal-compact .signal-form{padding:12px 16px}.signal-compact textarea{font-size:12px}.signal-compact .verdict{margin:12px 14px 0;flex-direction:column;gap:10px}.signal-compact .verdict-refs{gap:8px 16px}.signal-compact .check-list{padding:8px 14px}

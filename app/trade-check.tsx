@@ -19,10 +19,12 @@ const sideName={buy:'compra',sell:'venda'};
 const num=(v:number)=>new Intl.NumberFormat('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
 const time=(v:string)=>new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Fortaleza',hour:'2-digit',minute:'2-digit'}).format(new Date(v));
 
-export function TradeButtons({busy,onCheck}:{busy:Side|null;onCheck:(s:Side)=>void}){
+// locked: the daily risk limit was hit; the buttons stay visible but disabled, with the reason below.
+export function TradeButtons({busy,onCheck,locked=false}:{busy:Side|null;onCheck:(s:Side)=>void;locked?:boolean}){
  return <div className="trade-buttons">
-  <button className="button trade-buy" disabled={!!busy} onClick={()=>onCheck('buy')}>{busy==='buy'?<Loader2 size={16} className="spin"/>:<TrendingUp size={16}/>}Avaliar compra</button>
-  <button className="button trade-sell" disabled={!!busy} onClick={()=>onCheck('sell')}>{busy==='sell'?<Loader2 size={16} className="spin"/>:<TrendingDown size={16}/>}Avaliar venda</button>
+  <button className="button trade-buy" disabled={!!busy||locked} onClick={()=>onCheck('buy')}>{busy==='buy'?<Loader2 size={16} className="spin"/>:<TrendingUp size={16}/>}Avaliar compra</button>
+  <button className="button trade-sell" disabled={!!busy||locked} onClick={()=>onCheck('sell')}>{busy==='sell'?<Loader2 size={16} className="spin"/>:<TrendingDown size={16}/>}Avaliar venda</button>
+  {locked&&<small className="trade-locked">Dia travado pelo limite de risco. Veja o card Meu dia.</small>}
  </div>;
 }
 

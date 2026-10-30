@@ -31,7 +31,7 @@ type Bar=Candle&{live?:boolean};
 
 // Our own chart: the exact candles, levels, predictions and plan the AI and the rules work with, on one price scale.
 // The chart is created once and its series are updated in place, so new candles keep the user's zoom and scroll.
-export function MarketChart({series,levels,insight,predictions,events,plan,live}:{series:Record<Tf,Candle[]|null>;levels:Levels|null;insight:Insight|null;predictions:Prediction[];events:CalEvent[];plan:ChartPlan|null;live:{price:number;time:number}|null}){
+export function MarketChart({series,levels,insight,predictions,events,plan,live,crt}:{series:Record<Tf,Candle[]|null>;levels:Levels|null;insight:Insight|null;predictions:Prediction[];events:CalEvent[];plan:ChartPlan|null;live:{price:number;time:number}|null;crt:{high:number;low:number}|null}){
  const box=useRef<HTMLDivElement>(null), api=useRef<Api|null>(null), shownTf=useRef<Tf|null>(null), bars=useRef(new Map<number,Bar>());
  const [ready,setReady]=useState(false),[tf,setTf]=useState<Tf>('5'),[on,setOn]=useState<Record<Layer,boolean>>(DEFAULT_ON),[hover,setHover]=useState<Bar|null>(null),[liveSeen,setLiveSeen]=useState<{key:string;high:number;low:number}|null>(null);
  // Mount-time read of this browser's layer choices.
@@ -113,6 +113,8 @@ export function MarketChart({series,levels,insight,predictions,events,plan,live}
    const day:[keyof Levels,string,string][]=[['pdh','máx ontem','#9b7fc4'],['pdl','mín ontem','#9b7fc4'],['pdc','fech ontem','#6f5a8f'],['asiaHigh','máx Ásia','#4f9aa8'],['asiaLow','mín Ásia','#4f9aa8'],['londonHigh','máx Londres','#b08a4f'],['londonLow','mín Londres','#b08a4f']];
    for(const [k,title,color] of day){const p=levels[k];if(typeof p==='number')lv(p,title,color,LineStyle.LargeDashed)}
   }
+  // The CRT range (previous H4's high and low) whose sweep the current setup is built on.
+  if(on.levels&&crt){lv(crt.high,'CRT High','#e0a458',LineStyle.Dashed,2);lv(crt.low,'CRT Low','#e0a458',LineStyle.Dashed,2)}
   if(on.predictions&&insight?.invalidation)lv(insight.invalidation.price,'invalida 4h','#e0604f',LineStyle.Solid,2);
   if(on.predictions&&insight?.short?.invalidation)lv(insight.short.invalidation.price,'invalida 1h','#e0604f',LineStyle.Dashed,1);
   // The buy/sell plan from the last check: entry, the session-capped SL, the TP ladder and the protection layer zone.
@@ -136,7 +138,7 @@ export function MarketChart({series,levels,insight,predictions,events,plan,live}
    const visible=Math.round(8*3600000/step);
    a.chart.timeScale().setVisibleLogicalRange({from:Math.max(0,all.length-visible),to:all.length+future.length+4});
   }
- },[ready,candles,liveBar,step,tf,levels,insight,predictions,events,plan,on]);
+ },[ready,candles,liveBar,step,tf,levels,insight,predictions,events,plan,on,crt]);
 
  const bar:Bar|null=hover??liveBar??candles.at(-1)??null, change=bar?bar.close-bar.open:0;
  return <div className="own-chart-wrap">

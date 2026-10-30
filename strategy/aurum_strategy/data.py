@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 CACHE = Path(__file__).resolve().parent.parent / "data"
-INTERVALS = {"5min": 300_000, "1h": 3_600_000}
+INTERVALS = {"1min": 60_000, "5min": 300_000, "1h": 3_600_000}
 
 
 @dataclass(frozen=True)

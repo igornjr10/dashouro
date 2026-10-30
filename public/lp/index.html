@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aurum — Ouro com regras</title>
+<meta name="description" content="Painel de XAU/USD que confere sua entrada no ouro em 6 regras fixas antes do clique. Preço, candles, COT, Fed e calendário do USD num lugar só.">
+<meta property="og:title" content="Aurum — seu trade no ouro passa por 6 regras antes do clique">
+<meta property="og:description" content="Painel de XAU/USD com veredito por regras fixas. A IA explica, não decide. Lista de espera aberta.">
+<meta name="theme-color" content="#07080B">
+<link rel="icon" href="/lp/assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script>
+  /* Liga as animações só se o usuário não pediu movimento reduzido.
+     Failsafe: se o GSAP não carregar em 3s, mostra tudo. */
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.documentElement.classList.add('motion');
+    setTimeout(() => { if (!window.gsap) document.documentElement.classList.remove('motion'); }, 3000);
+  }
+</script>
+<style>
+/* ============ 1. TOKENS (estilo 6 · Futurista · marca Aurum) ============ */
+:root{
+  --bg:#07080B; --bg-2:#0E1016; --surface:rgba(255,255,255,.04); --line:rgba(255,255,255,.10);
+  --text:#F3F5F9; --muted:#9AA1AE;
+  --accent:#F5C451; --accent-2:#FFE7A3; --accent-ink:#1A1200;
+  --cold:#5B8CFF; --up:#3DDC97; --down:#FF6B6B;
+  --font-display:"Space Grotesk",system-ui,sans-serif; --font-body:"Space Grotesk",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,monospace;
+  --radius:20px; --radius-sm:12px; --container:1200px; --gutter:clamp(16px,4vw,40px);
+  --section-y:clamp(72px,11vw,160px);
+  --step--1:clamp(.84rem,.82rem + .1vw,.9rem);
+  --step-0:clamp(1rem,.96rem + .2vw,1.125rem);
+  --step-1:clamp(1.2rem,1.1rem + .5vw,1.5rem);
+  --step-2:clamp(1.5rem,1.25rem + 1.1vw,2.25rem);
+  --step-3:clamp(2rem,1.5rem + 2.2vw,3.5rem);
+  --step-4:clamp(2.6rem,1.7rem + 4vw,5.25rem);
+  --step-5:clamp(2.9rem,1.7rem + 5.4vw,6.6rem);
+  --ease:cubic-bezier(.16,1,.3,1);
+  --shadow:0 30px 80px -20px rgba(0,0,0,.6);
+  --glow:0 0 0 1px rgba(255,255,255,.06), 0 20px 60px -10px color-mix(in srgb,var(--accent) 45%,transparent);
+}
+.theme-light{ --bg:#FFFFFF; --bg-2:#F4F4F6; --surface:rgba(0,0,0,.035); --line:rgba(0,0,0,.10);
+  --text:#0B0B0F; --muted:#55555F; background:var(--bg); color:var(--text); }
+
+/* ============ 2. BASE ============ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%;scroll-behavior:auto}
+html.lenis,html.lenis body{height:auto}
+.lenis.lenis-smooth{scroll-behavior:auto!important}
+body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-size:var(--step-0);
+  line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:clip}
+img,video,canvas,svg{display:block;max-width:100%}
+img{height:auto}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+h1,h2,h3,h4{font-family:var(--font-display);line-height:1.04;letter-spacing:-.025em;font-weight:700;text-wrap:balance}
+h1{font-size:var(--step-5)} h2{font-size:var(--step-4)} h3{font-size:var(--step-2)} h4{font-size:var(--step-1)}
+p{text-wrap:pretty;max-width:62ch}
+.lead{font-size:var(--step-1);color:var(--muted);line-height:1.5}
+.muted{color:var(--muted)}
+.container{width:min(100% - 2*var(--gutter),var(--container));margin-inline:auto}
+.section{position:relative;padding-block:var(--section-y);isolation:isolate}
+.center{text-align:center;margin-inline:auto} .center p{margin-inline:auto}
+.stack{display:flex;flex-direction:column;gap:var(--gap,1.25rem)}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:var(--gap,1rem)}
+.grid{display:grid;gap:var(--gap,clamp(16px,2vw,28px));grid-template-columns:repeat(auto-fit,minmax(min(100%,var(--min,280px)),1fr))}
+.split{display:grid;gap:clamp(32px,5vw,80px);align-items:center;grid-template-columns:1fr}
+@media(min-width:900px){.split{grid-template-columns:1.1fr .9fr}.split--rev>:first-child{order:2}}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+
+/* ============ 3. COMPONENTES (C) ============ */
+.btn{--h:56px;position:relative;display:inline-flex;align-items:center;justify-content:center;gap:.6em;
+  height:var(--h);padding:0 1.6em;border-radius:999px;font-weight:700;font-size:var(--step-0);
+  transition:transform .4s var(--ease),box-shadow .4s var(--ease),background .3s;overflow:hidden;isolation:isolate;white-space:nowrap}
+.btn--lg{--h:66px;font-size:var(--step-1);padding:0 2em}
+.btn--primary{color:var(--accent-ink);background:linear-gradient(135deg,var(--accent-2),var(--accent));box-shadow:var(--glow)}
+.btn--primary::after{content:"";position:absolute;inset:0;z-index:-1;
+  background:linear-gradient(110deg,transparent 30%,rgba(255,255,255,.55) 50%,transparent 70%);
+  transform:translateX(-120%);animation:shine 3.2s var(--ease) infinite}
+.btn--primary:hover{transform:translateY(-2px);box-shadow:0 0 0 1px rgba(255,255,255,.1),0 26px 70px -8px color-mix(in srgb,var(--accent) 65%,transparent)}
+.btn--ghost{border:1px solid var(--line);background:var(--surface);backdrop-filter:blur(10px)}
+.btn--ghost:hover{border-color:color-mix(in srgb,var(--accent) 60%,transparent)}
+.btn svg{width:1.1em;height:1.1em;transition:transform .4s var(--ease)}
+.btn:hover svg{transform:translateX(4px)}
+@keyframes shine{0%,55%{transform:translateX(-120%)}100%{transform:translateX(120%)}}
+@media(max-width:520px){.btn{width:100%;white-space:normal;text-align:center;height:auto;min-height:var(--h);padding-block:.8em}}
+
+.badge{display:inline-flex;width:fit-content;align-items:center;gap:.55em;padding:.45em .95em;border-radius:999px;font-size:var(--step--1);
+  border:1px solid var(--line);background:var(--surface);backdrop-filter:blur(8px);color:var(--muted)}
+.badge i{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 0 var(--accent);animation:pulse 2s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 9px transparent}100%{box-shadow:0 0 0 0 transparent}}
+
+.card{position:relative;padding:clamp(22px,3vw,36px);border-radius:var(--radius);background:var(--surface);border:1px solid var(--line)}
+.card--glass{background:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,.015));backdrop-filter:blur(18px);box-shadow:var(--shadow)}
+.glow-card{--mx:-999px;--my:-999px;border:1px solid transparent;border-radius:var(--radius);padding:clamp(22px,3vw,36px);
+  background:linear-gradient(var(--bg-2),var(--bg-2)) padding-box,
+    radial-gradient(420px circle at var(--mx) var(--my),var(--accent),transparent 45%) border-box,
+    linear-gradient(var(--line),var(--line)) border-box;position:relative}
+.glow-card::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(500px circle at var(--mx) var(--my),color-mix(in srgb,var(--accent) 12%,transparent),transparent 40%)}
+.icon-box{width:52px;height:52px;display:grid;place-items:center;border-radius:14px;
+  background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent)}
+.icon-box svg{width:24px;height:24px}
+.marquee{--dur:30s;overflow:hidden;mask:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent)}
+.marquee__track{display:flex;width:max-content;gap:var(--gap,clamp(32px,5vw,72px));animation:marquee var(--dur) linear infinite}
+.marquee__track>*{flex:none}
+.marquee:hover .marquee__track{animation-play-state:paused}
+.marquee--rev .marquee__track{animation-direction:reverse}
+@keyframes marquee{to{transform:translateX(-50%)}}
+.mock-browser{border-radius:14px;overflow:hidden;border:1px solid var(--line);background:var(--bg-2);box-shadow:var(--shadow)}
+.mock-browser__bar{display:flex;gap:6px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.mock-browser__bar i{width:10px;height:10px;border-radius:50%;background:var(--line)}
+.faq{border-top:1px solid var(--line)}
+.faq details{border-bottom:1px solid var(--line)}
+.faq summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;gap:1rem;padding:1.4rem 0;font-weight:600;font-size:var(--step-1)}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";font-size:1.6em;line-height:.8;color:var(--accent);transition:rotate .4s var(--ease)}
+.faq details[open] summary::after{rotate:45deg}
+.faq details>div{padding:0 0 1.4rem;color:var(--muted)}
+.checklist{list-style:none;display:grid;gap:.8rem;text-align:left}
+.checklist li{display:flex;gap:.7rem;align-items:flex-start}
+.checklist li::before{content:"";flex:none;width:22px;height:22px;margin-top:.15em;border-radius:50%;
+  background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3'%3E%3Cpath d='M5 12l5 5L20 7'/%3E%3C/svg%3E") center/14px no-repeat}
+.stack-cards{display:grid;gap:4vh}
+.stack-card{position:sticky;top:calc(12vh + var(--i,0) * 18px);transform-origin:50% 0;will-change:transform;background:var(--bg-2)!important;backdrop-filter:none!important}
+.progress{position:fixed;inset:0 0 auto;height:3px;z-index:100;transform-origin:0 50%;transform:scaleX(0);
+  background:linear-gradient(90deg,var(--accent),var(--accent-2))}
+.header{position:fixed;inset:0 0 auto;z-index:50;padding:14px 0;transition:transform .5s var(--ease),background .3s}
+.header.is-scrolled{background:color-mix(in srgb,var(--bg) 75%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.header.is-hidden{transform:translateY(-100%)}
+.header .container{display:flex;justify-content:space-between;align-items:center}
+.header .btn{--h:44px;font-size:var(--step--1)}
+@media(max-width:520px){.header .btn{width:auto}}
+.cta-bar{position:fixed;inset:auto 12px 12px;z-index:60;display:none;transform:translateY(140%);transition:transform .5s var(--ease)}
+.cta-bar.is-on{transform:none}
+@media(max-width:767px){.cta-bar{display:block}.cta-bar .btn{width:100%}}
+.media{border-radius:var(--radius);overflow:hidden;border:1px solid var(--line);background:var(--bg-2)}
+.stat b{display:block;white-space:nowrap;font-family:var(--font-display);font-size:var(--step-4);font-weight:800;line-height:1;letter-spacing:-.04em;
+  background:linear-gradient(180deg,var(--text),color-mix(in srgb,var(--text) 55%,transparent));-webkit-background-clip:text;background-clip:text;color:transparent}
+.stat span{color:var(--muted);font-size:var(--step--1)}
+.form{display:grid;gap:.8rem;width:100%;max-width:480px}
+.form input,.form select{width:100%;height:56px;padding:0 1.1rem;border-radius:14px;font:inherit;color:var(--text);
+  background:var(--surface);border:1px solid var(--line);transition:border-color .3s}
+.form input:focus,.form select:focus{outline:none;border-color:var(--accent)}
+.form .btn{width:100%}
+.text-grad{background:linear-gradient(100deg,var(--accent-2),var(--accent) 60%);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+/* ============ 4. MOVIMENTO — estados iniciais (só com .motion) ============ */
+.motion [data-reveal],.motion [data-stagger]>*{opacity:0;transform:translateY(32px)}
+.motion [data-reveal="fade"]{transform:none}
+.motion [data-reveal="left"]{transform:translateX(-48px)}
+.motion [data-reveal="right"]{transform:translateX(48px)}
+.motion [data-reveal="scale"]{transform:scale(.92)}
+.motion [data-hero-item]{opacity:0;transform:translateY(24px)}
+.motion [data-split]{visibility:hidden}
+.split-w{display:inline-block;overflow:hidden;vertical-align:top;padding-bottom:.08em;margin-bottom:-.08em}
+.split-i{display:inline-block;will-change:transform}
+.motion [data-clip]{clip-path:inset(100% 0 0 0)}
+[data-clip] img{scale:1.15;transition:none}
+[data-tilt]{transform-style:preserve-3d;will-change:transform}
+[data-tilt]::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .3s;
+  background:radial-gradient(circle at var(--gx,50%) var(--gy,50%),rgba(255,255,255,.18),transparent 55%)}
+[data-tilt]:hover::after{opacity:1}
+
+/* ============ 5. BACKGROUNDS (B) ============ */
+.bg{position:absolute;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+canvas.bg{width:100%;height:100%}
+.bg-mesh i{position:absolute;width:55vmax;aspect-ratio:1;border-radius:50%;filter:blur(90px);opacity:.55;mix-blend-mode:screen;
+  animation:blob 22s ease-in-out infinite alternate}
+.bg-mesh i:nth-child(1){background:var(--accent);top:-25%;left:-15%}
+.bg-mesh i:nth-child(2){background:var(--accent-2);bottom:-35%;right:-20%;animation-duration:28s;animation-delay:-6s;opacity:.35}
+.bg-mesh i:nth-child(3){background:color-mix(in srgb,var(--accent) 50%,#7a1cff);top:30%;left:40%;width:35vmax;animation-duration:19s;opacity:.25}
+@keyframes blob{50%{transform:translate(12vw,8vh) scale(1.15)}100%{transform:translate(-8vw,14vh) scale(.9)}}
+.bg-aurora::before{content:"";position:absolute;inset:-50%;
+  background:conic-gradient(from 0deg at 50% 50%,transparent 0 20%,color-mix(in srgb,var(--accent) 55%,transparent) 28%,transparent 36% 60%,color-mix(in srgb,var(--accent-2) 40%,transparent) 68%,transparent 76%);
+  filter:blur(60px);animation:spin 26s linear infinite;opacity:.6}
+.bg-aurora::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 50% 0%,transparent,var(--bg) 70%)}
+@keyframes spin{to{transform:rotate(1turn)}}
+.bg-grid{perspective:600px}
+.bg-grid::before{content:"";position:absolute;left:-50%;right:-50%;bottom:-10%;height:80%;
+  background-image:linear-gradient(color-mix(in srgb,var(--accent) 35%,transparent) 1px,transparent 1px),
+                   linear-gradient(90deg,color-mix(in srgb,var(--accent) 35%,transparent) 1px,transparent 1px);
+  background-size:60px 60px;transform:rotateX(62deg);transform-origin:50% 100%;animation:gridmove 4s linear infinite;
+  mask:linear-gradient(to top,#000 10%,transparent 85%)}
+.bg-grid::after{content:"";position:absolute;left:0;right:0;top:42%;height:40%;
+  background:radial-gradient(ellipse 50% 50% at 50% 50%,color-mix(in srgb,var(--accent) 35%,transparent),transparent 70%);filter:blur(30px)}
+@keyframes gridmove{to{background-position:0 60px,0 0}}
+.grain{position:fixed;inset:-50%;z-index:90;pointer-events:none;opacity:.05;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation:grain 1s steps(6) infinite}
+@keyframes grain{0%{transform:translate(0,0)}33%{transform:translate(-4%,3%)}66%{transform:translate(3%,-5%)}100%{transform:translate(-2%,4%)}}
+.bg-spot{background:radial-gradient(600px circle at var(--sx,50%) var(--sy,30%),color-mix(in srgb,var(--accent) 18%,transparent),transparent 60%)}
+.bg-dots{background-image:radial-gradient(color-mix(in srgb,var(--text) 18%,transparent) 1px,transparent 1.5px);background-size:26px 26px;
+  mask:radial-gradient(ellipse 70% 60% at 50% 40%,#000,transparent)}
+
+/* ============ 6. CSS específico da página ============ */
+.hero-3d{position:absolute;inset:0;width:100%;height:100%;z-index:-1}
+@media(max-width:767px){.hero-3d{opacity:.4}}
+.hero .container{max-width:var(--container)}
+.hero__copy{max-width:680px}
+.hero h1 .text-grad{display:inline}
+/* o split envolve cada palavra num inline-block; o degradê precisa ir para elas */
+.text-grad .split-i{background:linear-gradient(100deg,var(--accent-2),var(--accent) 60%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.mono{font-family:var(--font-mono);letter-spacing:0}
+.eyebrow{font-family:var(--font-mono);font-size:var(--step--1);letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.hero__meta{display:flex;flex-wrap:wrap;gap:.5rem 1.4rem;font-family:var(--font-mono);font-size:var(--step--1);color:var(--muted)}
+.hero__meta span::before{content:"▸ ";color:var(--accent)}
+/* aurora fria + mesh com azul em vez de roxo */
+.bg-mesh i:nth-child(3){background:var(--cold)}
+.bg-aurora::before{background:conic-gradient(from 0deg at 50% 50%,transparent 0 20%,color-mix(in srgb,var(--cold) 45%,transparent) 28%,transparent 36% 60%,color-mix(in srgb,var(--accent) 35%,transparent) 68%,transparent 76%)}
+/* fontes de dados no marquee */
+.src{display:inline-flex;align-items:center;gap:.6rem;font-family:var(--font-mono);font-size:var(--step-0);color:var(--muted)}
+.src b{color:var(--text);font-weight:500}
+.src i{width:6px;height:6px;border-radius:50%;background:var(--up);box-shadow:0 0 10px var(--up)}
+/* etapas do método */
+.step-n{font-family:var(--font-mono);font-size:var(--step--1);color:var(--accent);letter-spacing:.1em}
+.stack-card h3{margin:.4rem 0 .8rem}
+.stack-card{display:grid;align-content:space-between;gap:2rem}
+.stack-card .tags{display:flex;flex-wrap:wrap;gap:.5rem}
+.tag{font-family:var(--font-mono);font-size:.78rem;padding:.35em .75em;border-radius:8px;border:1px solid var(--line);color:var(--muted);background:rgba(255,255,255,.02)}
+/* painel ilustrativo (veredito) */
+.panel{font-family:var(--font-mono);font-size:.88rem}
+.panel__body{padding:clamp(16px,2.4vw,26px);display:grid;gap:1rem}
+.panel__head{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap}
+.panel__price{font-size:1.5rem;font-weight:700;color:var(--text)}
+.chip{display:inline-flex;align-items:center;gap:.4em;padding:.3em .7em;border-radius:999px;font-size:.76rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.chip--ok{background:color-mix(in srgb,var(--up) 16%,transparent);color:var(--up)}
+.chip--warn{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent)}
+.chip--bad{background:color-mix(in srgb,var(--down) 16%,transparent);color:var(--down)}
+.rules{list-style:none;display:grid;gap:.45rem}
+.rules li{display:flex;justify-content:space-between;gap:1rem;padding:.55rem .75rem;border-radius:10px;background:rgba(255,255,255,.025);border:1px solid var(--line)}
+.rules li span:first-child{color:var(--muted)}
+.ok{color:var(--up)} .bad{color:var(--down)} .warn{color:var(--accent)}
+.levels{display:grid;grid-template-columns:repeat(4,1fr);gap:.45rem}
+.levels div{padding:.6rem;border-radius:10px;border:1px solid var(--line);text-align:center}
+.levels small{display:block;color:var(--muted);font-size:.7rem}
+@media(max-width:480px){.levels{grid-template-columns:repeat(2,1fr)}}
+.panel__note{color:var(--muted);font-size:.72rem;text-align:center;padding-bottom:.9rem}
+/* sinal colado */
+.paste{white-space:pre;font-family:var(--font-mono);font-size:.9rem;line-height:1.7;padding:1rem 1.2rem;border-radius:12px;
+  background:#000;border:1px dashed color-mix(in srgb,var(--accent) 40%,transparent);color:var(--accent-2);overflow-x:auto}
+.arrow-down{display:grid;place-items:center;color:var(--accent);padding:.2rem 0}
+/* números */
+.stat b.mono{font-family:var(--font-mono);letter-spacing:-.06em}
+.stat{border-left:1px solid var(--line);padding-left:1.2rem}
+/* rodapé */
+.risk{font-size:.78rem;line-height:1.6;color:var(--muted);max-width:none;border:1px solid var(--line);border-radius:12px;padding:1rem 1.2rem;background:var(--surface)}
+
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
+</style>
+</head>
+<body>
+<div class="progress" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+
+<!-- S00 HEADER + BARRA CTA MOBILE -->
+<header class="header">
+  <div class="container">
+    <a href="#topo" aria-label="Aurum, início"><img src="/lp/assets/logo.svg" alt="Aurum" width="148" height="32" style="height:30px;width:auto"></a>
+    <a class="btn btn--primary" href="#cadastro">Entrar na lista</a>
+  </div>
+</header>
+<div class="cta-bar"><a class="btn btn--primary" href="#cadastro">Quero acesso antecipado →</a></div>
+
+<!-- S01 HERO · B3 grid + T2 globo de partículas -->
+<section class="section hero" id="topo" data-hero style="min-height:100svh;display:grid;align-items:center;padding-top:120px">
+  <div class="bg bg-grid" aria-hidden="true"></div>
+  <canvas class="hero-3d" data-3d="particulas" data-x="2.3" aria-hidden="true"></canvas>
+  <div class="container">
+    <div class="hero__copy stack" style="--gap:1.6rem">
+      <span class="badge" data-hero-item><i></i>XAU/USD · lista de espera aberta</span>
+      <h1 data-split>Seu trade no ouro passa por <span class="text-grad">6 regras</span> antes do clique.</h1>
+      <p class="lead" data-hero-item>O Aurum junta preço spot, candles M5 e H1, COT, Fed, notícias e o calendário do dólar num painel só. O veredito de compra ou venda sai de regras fixas. A IA explica o porquê, mas não muda a decisão.</p>
+      <div class="row" data-hero-item>
+        <a class="btn btn--primary btn--lg" href="#cadastro" data-magnetic>Entrar na lista de espera
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+        <a class="btn btn--ghost btn--lg" href="#veredito">Ver o veredito</a>
+      </div>
+      <div class="hero__meta" data-hero-item><span>Não envia ordens</span><span>Dado velho bloqueia a IA</span><span>Placar de acertos aberto</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- S02 FAIXA DE FONTES (dados reais que o painel lê) -->
+<section class="section" style="--section-y:40px;border-block:1px solid var(--line);background:var(--bg-2)">
+  <div class="marquee" data-marquee style="--dur:40s">
+    <div class="marquee__track">
+      <span class="src"><i></i><b>Spot XAU/USD</b> a cada 30 s</span>
+      <span class="src"><i></i><b>Candles M5 + H1</b> Twelve Data</span>
+      <span class="src"><i></i><b>COT</b> CFTC · ouro COMEX</span>
+      <span class="src"><i></i><b>Federal Reserve</b> política monetária</span>
+      <span class="src"><i></i><b>Calendário USD</b> impacto alto e médio</span>
+      <span class="src"><i></i><b>Notícias</b> ouro e Fed, últimos 3 dias</span>
+    </div>
+  </div>
+</section>
+
+<!-- S03 DOR (texto que acende no scroll) -->
+<section class="section">
+  <div class="container">
+    <p class="eyebrow" style="margin-bottom:1.4rem">O problema</p>
+    <p data-scrub-text style="font-family:var(--font-display);font-size:var(--step-3);line-height:1.15;font-weight:600;max-width:26ch">O sinal chega sem contexto. O ouro anda 20 pips em minutos, o payroll sai no meio do trade e o stop que veio no sinal não cabe na sua sessão. O Aurum confere tudo isso antes de você clicar, não depois.</p>
+  </div>
+</section>
+
+<!-- S04 MÉTODO (cartas empilhando) -->
+<section class="section" id="metodo" style="padding-top:0">
+  <div class="container">
+    <div class="stack" style="margin-bottom:6vh"><p class="eyebrow">Como funciona</p><h2 data-split>Quatro passos, nessa ordem.</h2><p class="lead" data-reveal>Primeiro o mercado, depois a leitura, depois a sua entrada. O dinheiro só entra na conta no fim, e quem decide é você.</p></div>
+    <div class="stack-cards">
+      <article class="stack-card card card--glass" style="min-height:46vh">
+        <div><span class="step-n">01 / LÊ O MERCADO</span><h3>Preço, candles e níveis do dia</h3>
+        <p class="muted">Spot do ouro a cada 30 segundos, candles de 5 minutos e de 1 hora, máxima, mínima e fechamento de ontem, e as faixas das sessões Ásia, Londres e Nova York.</p></div>
+        <div class="tags"><span class="tag">EMA</span><span class="tag">RSI</span><span class="tag">ATR</span><span class="tag">Momentum</span><span class="tag">Tendência H1</span></div>
+      </article>
+      <article class="stack-card card card--glass" style="min-height:46vh">
+        <div><span class="step-n">02 / DÁ UM VIÉS</span><h3>Alta, baixa ou neutro, para 1 a 4 horas</h3>
+        <p class="muted">Com nível de confiança, os motivos e o preço que invalida a leitura. Se um evento forte do dólar sai nas próximas 4 horas, ou o H1 aponta para o outro lado, a confiança é rebaixada automaticamente.</p></div>
+        <div class="tags"><span class="tag">Confiança limitada</span><span class="tag">Invalidação em preço</span></div>
+      </article>
+      <article class="stack-card card card--glass" style="min-height:46vh">
+        <div><span class="step-n">03 / CONFERE SUA ENTRADA</span><h3>Você toca em Avaliar compra ou Avaliar venda</h3>
+        <p class="muted">Seis regras fixas dão o veredito: favorável, com ressalvas, desfavorável ou não operar. Candle velho ou notícia de alto impacto em 30 minutos travam a entrada. A IA lista prós e contras, sem poder mudar o resultado.</p></div>
+        <div class="tags"><span class="tag">Favorável</span><span class="tag">Ressalvas</span><span class="tag">Desfavorável</span><span class="tag">Não operar</span></div>
+      </article>
+      <article class="stack-card card card--glass" style="min-height:46vh">
+        <div><span class="step-n">04 / CALCULA STOP E ALVOS</span><h3>Stop técnico que cabe na sessão</h3>
+        <p class="muted">Stop além do nível de proteção mais próximo, dentro do limite da sessão: 30 pips em Ásia e Londres, 50 em Nova York. Alvos em 20, 40 a 50 e 80 pips, com camada de proteção, preço médio e o prejuízo total se as duas pararem no stop.</p></div>
+        <div class="tags"><span class="tag">TP1 20</span><span class="tag">TP2 40–50</span><span class="tag">TP3 80</span><span class="tag">Camada de proteção</span></div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- VEREDITO (painel ilustrativo) -->
+<section class="section" id="veredito">
+  <div class="bg bg-aurora" aria-hidden="true"></div>
+  <div class="container split">
+    <div class="stack">
+      <p class="eyebrow">O veredito</p>
+      <h2 data-split>Regra decide. IA explica.</h2>
+      <p class="lead" data-reveal>A maioria das ferramentas deixa o modelo de IA dizer "compra". No Aurum, o veredito vem de regras calculadas no servidor. O modelo só escreve o contexto: o que pesa a favor, o que pesa contra, o que o COT e as notícias dizem.</p>
+      <ul class="checklist" data-stagger>
+        <li>Tendência do M5 e do H1 a favor do lado escolhido</li>
+        <li>Momentum de 1 hora e RSI sem esticar</li>
+        <li>Nenhum nível no caminho antes do TP1</li>
+        <li>Stop técnico dentro do limite da sessão</li>
+      </ul>
+    </div>
+    <div class="mock-browser panel" data-tilt="6" data-reveal="scale">
+      <div class="mock-browser__bar"><i></i><i></i><i></i></div>
+      <div class="panel__body">
+        <div class="panel__head">
+          <div><small class="muted">XAU/USD · M5</small><div class="panel__price">4.019,40</div></div>
+          <span class="chip chip--warn">● Compra · com ressalvas</span>
+        </div>
+        <ul class="rules">
+          <li><span>Tendência M5</span><span class="ok">✓ alta</span></li>
+          <li><span>Tendência H1</span><span class="ok">✓ alta</span></li>
+          <li><span>Momentum 1h</span><span class="ok">✓ positivo</span></li>
+          <li><span>RSI não esticado</span><span class="ok">✓ 58</span></li>
+          <li><span>Nível antes do TP1</span><span class="ok">✓ livre</span></li>
+          <li><span>Stop cabe na sessão</span><span class="ok">✓ 26 / 30</span></li>
+          <li><span>Evento USD em 4h</span><span class="warn">! limita a ressalvas</span></li>
+        </ul>
+        <div class="levels">
+          <div><small>SL</small><span class="bad">−26</span></div>
+          <div><small>TP1</small><span class="ok">+20</span></div>
+          <div><small>TP2</small><span class="ok">+45</span></div>
+          <div><small>TP3</small><span class="ok">+80</span></div>
+        </div>
+      </div>
+      <p class="panel__note">Ilustração da interface. Valores de exemplo, em pips.</p>
+    </div>
+  </div>
+</section>
+
+<!-- S05 RECURSOS (glow cards) -->
+<section class="section">
+  <div class="container">
+    <p class="eyebrow" style="margin-bottom:1rem">No painel</p>
+    <h2 data-split style="margin-bottom:3rem;max-width:18ch">O que fica na sua tela durante o pregão.</h2>
+    <div class="grid" data-glow data-stagger style="--min:300px">
+      <div class="glow-card stack"><div class="icon-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 4v6c0 4-3.5 7-8 8-4.5-1-8-4-8-8V7z"/><path d="M9 12l2 2 4-4"/></svg></div><h4>Dado que não é inventado</h4><p class="muted">Se uma fonte cai, aparece "indisponível". Cotação com mais de 120 segundos é marcada como velha e a IA não roda em cima dela.</p></div>
+      <div class="glow-card stack"><div class="icon-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5m0 14h16M8 15l4-4 3 3 5-6"/></svg></div><h4>Gráfico com os mesmos candles da IA</h4><p class="muted">EMAs, níveis do dia, invalidação, faixa do horizonte, previsões passadas e eventos do dólar no mesmo gráfico.</p></div>
+      <div class="glow-card stack"><div class="icon-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M15 20c0-2.2 1-4 3.5-4S22 17.8 22 20"/></svg></div><h4>COT da CFTC</h4><p class="muted">Posição dos gestores no ouro COMEX, comparando os 2 relatórios semanais mais recentes. Dado semanal, mostrado como semanal.</p></div>
+      <div class="glow-card stack"><div class="icon-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></div><h4>Calendário do dólar</h4><p class="muted">Eventos de impacto alto e médio da semana. Notícia forte a 30 minutos trava a entrada. A 4 horas, limita o veredito.</p></div>
+      <div class="glow-card stack"><div class="icon-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg></div><h4>Placar de acertos</h4><p class="muted">Cada previsão é conferida contra o fechamento do M5 no fim do horizonte. Você vê quanto o viés acerta, separado por alta, baixa e confiança.</p></div>
+      <div class="glow-card stack"><div class="icon-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg></div><h4>Alertas de preço e evento</h4><p class="muted">Notificação no navegador quando o ouro chega no seu nível ou quando um evento do dólar se aproxima.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- SINAIS DO PARCEIRO -->
+<section class="section" style="background:var(--bg-2);border-block:1px solid var(--line)">
+  <div class="bg bg-dots" aria-hidden="true"></div>
+  <div class="container split split--rev">
+    <div class="stack">
+      <p class="eyebrow">Sinais de grupo</p>
+      <h2 data-split>Cole o sinal. Veja se ele passa nas suas regras.</h2>
+      <p class="lead" data-reveal>Encaminhe pelo Telegram ou cole o texto. O Aurum lê o sinal, confere o stop, a distância do primeiro alvo e a entrada contra o último candle, e devolve um stop ajustado à sua sessão quando o do sinal é largo demais.</p>
+      <p class="muted" data-reveal>Depois ele acompanha o trade pelos candles e pontua duas vezes: com o stop do sinal e com o stop das suas regras. Em algumas semanas, você sabe se o grupo vale a pena.</p>
+    </div>
+    <div class="stack" style="--gap:.6rem" data-reveal="left">
+      <div class="paste" aria-label="Exemplo de sinal colado">Gold buy 4019
+SL 4014
+TP 4025
+TP 4040</div>
+      <div class="arrow-down" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M6 13l6 6 6-6"/></svg></div>
+      <div class="card card--glass panel" style="padding:0">
+        <div class="panel__body">
+          <div class="panel__head"><span class="muted">Sinal lido · compra 4.019 · Londres</span><span class="chip chip--warn">● Stop ajustado</span></div>
+          <ul class="rules">
+            <li><span>Stop dentro do limite (30)</span><span class="bad">✗ 50 pips</span></li>
+            <li><span>Primeiro alvo ≥ 20 pips</span><span class="ok">✓ 60 pips</span></li>
+            <li><span>Entrada perto do último M5</span><span class="ok">✓ 3 pips</span></li>
+            <li><span>Stop pelas suas regras</span><span class="warn">→ 4.016,00</span></li>
+          </ul>
+        </div>
+        <p class="panel__note">Ilustração. Sinal de exemplo.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- S06 NÚMEROS (fatos do produto, não resultado) -->
+<section class="section">
+  <div class="container">
+    <h2 data-split style="margin-bottom:3rem;max-width:20ch">Os números que o Aurum respeita.</h2>
+    <div class="grid" style="--min:220px" data-stagger>
+      <div class="stat"><b class="mono" data-count="6">6</b><span>regras fixas no veredito</span></div>
+      <div class="stat"><b class="mono" data-count="30" data-suffix=" s">30 s</b><span>entre uma cotação e outra</span></div>
+      <div class="stat"><b class="mono" data-count="120" data-suffix=" s">120 s</b><span>de atraso e a IA para</span></div>
+      <div class="stat"><b class="mono" data-count="0">0</b><span>ordens enviadas à sua corretora</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- S08 PARA QUEM É / NÃO É -->
+<section class="section" style="padding-top:0">
+  <div class="container grid" style="--min:320px">
+    <div class="card stack" data-reveal="left"><h3>É para você se…</h3><ul class="checklist">
+      <li>opera XAU/USD no intraday ou no scalping</li>
+      <li>segue sinais de grupo e quer filtrar os ruins antes de entrar</li>
+      <li>quer uma regra entre você e o botão de compra</li>
+      <li>quer saber quanto a sua leitura acerta, com número</li></ul></div>
+    <div class="card stack" data-reveal="right" style="opacity:.85"><h3>Não é para você se…</h3><ul class="checklist" style="filter:grayscale(1)">
+      <li>procura um robô que opera sozinho</li>
+      <li>quer promessa de lucro ou de taxa de acerto</li>
+      <li>opera sem stop</li></ul></div>
+  </div>
+</section>
+
+<!-- S12 FAQ -->
+<section class="section" style="padding-top:0">
+  <div class="container" style="max-width:860px">
+    <h2 data-split style="margin-bottom:2rem">Perguntas frequentes</h2>
+    <div class="faq" data-reveal>
+      <details><summary>O Aurum opera por mim?</summary><div>Não. Ele nunca envia ordem. Você lê o veredito, decide e executa na sua corretora.</div></details>
+      <details><summary>É um grupo de sinais?</summary><div>Não. O Aurum é um painel que confere sinais, inclusive os de terceiros, contra regras fixas e mostra o placar de cada um.</div></details>
+      <details><summary>A IA decide se eu compro ou vendo?</summary><div>Não. O veredito sai de regras calculadas no servidor. A IA só explica os prós, os contras e o contexto de notícias e COT, e não pode mudar o resultado.</div></details>
+      <details><summary>Preciso pagar pela IA?</summary><div>A análise usa modelos gratuitos do OpenRouter com a sua própria chave. O checklist de compra e venda funciona mesmo sem chave.</div></details>
+      <details><summary>De onde vêm os dados?</summary><div>Cotação spot da Gold API, candles da Twelve Data, COT da CFTC, comunicados do Federal Reserve, calendário econômico agregado e manchetes do Google Notícias. O painel mostra a fonte e a idade de cada dado.</div></details>
+      <details><summary>O que acontece quando eu entro na lista?</summary><div>[Explicar o próximo passo real: quando o acesso antecipado abre, como o convite chega e se haverá condição especial para quem está na lista.]</div></details>
+    </div>
+  </div>
+</section>
+
+<!-- S18 CAPTURA (lista de espera) -->
+<section class="section" id="cadastro">
+  <div class="bg bg-mesh" aria-hidden="true"><i></i><i></i><i></i></div>
+  <div class="container split">
+    <div class="stack">
+      <p class="eyebrow">Acesso antecipado</p>
+      <h2 data-split>Entre na lista de espera do Aurum.</h2>
+      <p class="lead" data-reveal>Deixe seu contato e você recebe o convite quando o acesso abrir. [Prazo ou condição real do acesso antecipado.]</p>
+    </div>
+    <form class="form card card--glass" data-form data-reveal="scale">
+      <label class="sr-only" for="f-nome">Nome</label><input id="f-nome" name="nome" placeholder="Seu nome" required autocomplete="name">
+      <label class="sr-only" for="f-wpp">WhatsApp</label><input id="f-wpp" name="whatsapp" type="tel" placeholder="WhatsApp com DDD" required autocomplete="tel" inputmode="tel">
+      <label class="sr-only" for="f-email">E-mail</label><input id="f-email" name="email" type="email" placeholder="Seu melhor e-mail" autocomplete="email">
+      <label class="sr-only" for="f-exp">Há quanto tempo opera ouro</label>
+      <select id="f-exp" name="experiencia" required>
+        <option value="" disabled selected>Há quanto tempo opera ouro?</option>
+        <option>Ainda não opero</option>
+        <option>Menos de 1 ano</option>
+        <option>1 a 3 anos</option>
+        <option>Mais de 3 anos</option>
+      </select>
+      <button class="btn btn--primary btn--lg" type="submit">Quero acesso antecipado</button>
+      <span class="muted" style="font-size:var(--step--1);text-align:center">Seus dados ficam com a gente. Nada de spam.</span>
+    </form>
+  </div>
+</section>
+
+<!-- S13 CTA FINAL + RODAPÉ -->
+<section class="section center" style="min-height:80svh;display:grid;place-items:center">
+  <canvas class="bg" data-bg="shader" data-y=".8" aria-hidden="true"></canvas>
+  <div class="container stack" style="--gap:1.8rem;align-items:center">
+    <h2 data-split style="max-width:16ch">O próximo sinal vai chegar. Confira antes de clicar.</h2>
+    <a class="btn btn--primary btn--lg" href="#cadastro" data-magnetic>Entrar na lista de espera</a>
+  </div>
+</section>
+<footer class="section" style="--section-y:40px;border-top:1px solid var(--line)">
+  <div class="container stack" style="--gap:1.4rem">
+    <p class="risk">Aurum é uma ferramenta de análise e não é recomendação de investimento. Operar ouro e outros ativos alavancados envolve risco alto e pode causar perda maior que o capital depositado. Vieses, vereditos e placares descrevem o passado e não garantem resultado futuro. A decisão e a execução de cada operação são sempre suas.</p>
+    <div class="row muted" style="justify-content:space-between;font-size:var(--step--1)">
+      <span>© 2026 [Razão social] · CNPJ [nº]</span><span><a href="[politica.html]">Política de privacidade</a></span>
+    </div>
+  </div>
+</footer>
+
+<!-- ============ SCRIPTS ============ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lenis@1.1.13/dist/lenis.min.js"></script>
+<script>
+/* ============ CONFIG DO SITE — único lugar para trocar links e pixel ============ */
+const SITE = {
+  checkoutUrl: "",
+  whatsapp: "",                                 // DDI+DDD+número, só dígitos
+  whatsappMsg: "Olá! Vim pela página do Aurum.",
+  pixelId: "",                                  // ID do Meta Pixel (deixe "" para não carregar)
+  checkoutEvent: "InitiateCheckout",
+  whatsappEvent: "Contact",
+  formWebhook: "",                              // URL do webhook (n8n/Make) que recebe a lista de espera
+  thankYouUrl: ""                               // página de obrigado ("" = mensagem na própria página)
+};
+/* ================= MOTOR DE ANIMAÇÃO + RASTREIO (não editar; configure em SITE) ================= */
+(() => {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const fine = matchMedia('(pointer: fine)').matches;
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const hasGsap = !!window.gsap;
+
+  /* ---------- R1. UTMs: guarda e repassa para checkout/WhatsApp ---------- */
+  const KEYS = ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','fbclid','gclid','src','sck'];
+  const qs = new URLSearchParams(location.search);
+  let utm = {};
+  try { utm = JSON.parse(sessionStorage.getItem('utm') || '{}'); } catch(e) {}
+  KEYS.forEach(k => { if (qs.get(k)) utm[k] = qs.get(k); });
+  try { sessionStorage.setItem('utm', JSON.stringify(utm)); } catch(e) {}
+  const withUtm = (url) => {
+    try {
+      const u = new URL(url, location.href);
+      Object.entries(utm).forEach(([k, v]) => { if (!u.searchParams.has(k)) u.searchParams.set(k, v); });
+      if (/hotmart/.test(u.hostname) && !u.searchParams.has('sck') && utm.utm_source)
+        u.searchParams.set('sck', [utm.utm_source, utm.utm_medium, utm.utm_campaign, utm.utm_content].filter(Boolean).join('|'));
+      return u.toString();
+    } catch(e) { return url; }
+  };
+  const waLink = (msg) => {
+    const ref = utm.utm_content || utm.utm_campaign;
+    const text = (msg || SITE.whatsappMsg) + (ref ? ` (ref: ${ref})` : '');
+    return `https://wa.me/${SITE.whatsapp}?text=${encodeURIComponent(text)}`;
+  };
+
+  /* ---------- R2. Meta Pixel ---------- */
+  if (SITE.pixelId) {
+    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+    if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;
+    s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', SITE.pixelId); fbq('track', 'PageView');
+  }
+  const track = (ev, data) => { if (window.fbq && ev) fbq('track', ev, data || {}); };
+
+  /* ---------- R3. CTAs ---------- */
+  $$('[data-cta]').forEach(a => {
+    const type = a.dataset.cta;
+    if (type === 'checkout') a.href = withUtm(a.getAttribute('href') && a.getAttribute('href') !== '#' ? a.getAttribute('href') : SITE.checkoutUrl);
+    if (type === 'whatsapp') { a.href = waLink(a.dataset.msg); a.target = '_blank'; a.rel = 'noopener'; }
+    a.addEventListener('click', () => track(a.dataset.track || (type === 'whatsapp' ? SITE.whatsappEvent : SITE.checkoutEvent)));
+  });
+  $$('[data-track]:not([data-cta])').forEach(el => el.addEventListener('click', () => track(el.dataset.track)));
+
+  /* ---------- R4. Formulário de captura ---------- */
+  $$('form[data-form]').forEach(f => f.addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = f.querySelector('[type=submit]'); if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+    const data = Object.assign(Object.fromEntries(new FormData(f)), utm, { pagina: location.href.split('?')[0], enviado_em: new Date().toISOString() });
+    try { if (SITE.formWebhook) await fetch(SITE.formWebhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); } catch (err) {}
+    track('Lead');
+    const next = f.dataset.next || SITE.thankYouUrl;
+    if (next === 'whatsapp') location.href = waLink(`Olá! Sou ${data.nome || ''} e acabei de me cadastrar no site.`);
+    else if (next) location.href = withUtm(next);
+    else f.innerHTML = '<p class="lead">Pronto, você está na lista. Avisamos quando o acesso abrir.</p>';
+  }));
+
+  /* ---------- Header + barra CTA mobile ---------- */
+  const header = document.querySelector('.header'), bar = document.querySelector('.cta-bar');
+  let lastY = 0;
+  const onScroll = () => {
+    const y = scrollY;
+    if (header) { header.classList.toggle('is-scrolled', y > 40); header.classList.toggle('is-hidden', y > lastY && y > 400); }
+    if (bar) bar.classList.toggle('is-on', y > innerHeight * .8 && (innerHeight + y) < document.body.scrollHeight - 300);
+    lastY = y;
+  };
+  addEventListener('scroll', onScroll, { passive: true }); onScroll();
+
+  /* ---------- E08. Glow cards ---------- */
+  $$('[data-glow]').forEach(wrap => wrap.addEventListener('pointermove', e => {
+    $$('.glow-card', wrap).forEach(c => {
+      const r = c.getBoundingClientRect();
+      c.style.setProperty('--mx', `${e.clientX - r.left}px`); c.style.setProperty('--my', `${e.clientY - r.top}px`);
+    });
+  }));
+  $$('[data-spotlight]').forEach(el => el.addEventListener('pointermove', e => {
+    const r = el.getBoundingClientRect();
+    el.style.setProperty('--sx', `${e.clientX - r.left}px`); el.style.setProperty('--sy', `${e.clientY - r.top}px`);
+  }));
+
+  /* ---------- E05. Marquee ---------- */
+  $$('[data-marquee] .marquee__track').forEach(t => { t.innerHTML += t.innerHTML; [...t.children].slice(t.children.length / 2).forEach(c => c.setAttribute('aria-hidden', 'true')); });
+
+  if (!hasGsap || reduce) {
+    document.documentElement.classList.remove('motion');
+    $$('[data-count]').forEach(el => el.textContent = fmt(el, +el.dataset.count));
+    return;
+  }
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  /* ---------- E01. Smooth scroll (Lenis) ---------- */
+  let lenis = null;
+  if (window.Lenis) {
+    lenis = new Lenis({ lerp: 0.1, smoothWheel: true });
+    lenis.on('scroll', ScrollTrigger.update);
+    gsap.ticker.add(t => lenis.raf(t * 1000));
+    gsap.ticker.lagSmoothing(0);
+    window.lenis = lenis;
+  }
+  $$('a[href^="#"]').forEach(a => a.addEventListener('click', e => {
+    const id = a.getAttribute('href'); if (id.length < 2) return;
+    const t = document.querySelector(id); if (!t) return;
+    e.preventDefault(); lenis ? lenis.scrollTo(t, { offset: -70 }) : t.scrollIntoView({ behavior: 'smooth' });
+  }));
+
+  /* ---------- E03. Split de texto ---------- */
+  function split(el) {
+    const words = [];
+    const walk = node => [...node.childNodes].forEach(n => {
+      if (n.nodeType === 3) {
+        const frag = document.createDocumentFragment();
+        n.textContent.split(/(\s+)/).forEach(part => {
+          if (!part) return;
+          if (/^\s+$/.test(part)) { frag.append(' '); return; }
+          const w = document.createElement('span'); w.className = 'split-w';
+          const i = document.createElement('span'); i.className = 'split-i'; i.textContent = part;
+          w.append(i); frag.append(w); words.push(i);
+        });
+        n.replaceWith(frag);
+      } else if (n.nodeType === 1 && n.tagName !== 'BR') walk(n);
+    });
+    walk(el); el.style.visibility = 'visible'; return words;
+  }
+
+  $$('[data-hero]').forEach(hero => {
+    const tl = gsap.timeline({ defaults: { ease: 'expo.out' }, delay: .15 });
+    $$('[data-split]', hero).forEach(h => tl.from(split(h), { yPercent: 110, rotate: 4, duration: 1.3, stagger: .06 }, 0));
+    tl.to($$('[data-hero-item]', hero), { opacity: 1, y: 0, duration: 1.1, stagger: .1 }, .45);
+  });
+  $$('[data-split]').filter(h => !h.closest('[data-hero]')).forEach(h => {
+    const w = split(h);
+    gsap.from(w, { yPercent: 110, duration: 1.1, ease: 'expo.out', stagger: .05, scrollTrigger: { trigger: h, start: 'top 85%', once: true } });
+  });
+
+  /* ---------- E02. Reveal ---------- */
+  ScrollTrigger.batch('[data-reveal],[data-stagger]>*', {
+    start: 'top 88%', once: true,
+    onEnter: els => gsap.to(els, { opacity: 1, x: 0, y: 0, scale: 1, duration: 1.1, ease: 'expo.out', stagger: .09, overwrite: true })
+  });
+
+  /* ---------- E04. Contador ---------- */
+  function fmt(el, v) {
+    const d = +(el.dataset.decimals || 0);
+    return (el.dataset.prefix || '') + v.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d }) + (el.dataset.suffix || '');
+  }
+  $$('[data-count]').forEach(el => {
+    const o = { v: 0 }; el.textContent = fmt(el, 0);
+    gsap.to(o, { v: +el.dataset.count, duration: 2.2, ease: 'power3.out', onUpdate: () => el.textContent = fmt(el, o.v),
+      scrollTrigger: { trigger: el, start: 'top 90%', once: true } });
+  });
+
+  /* ---------- E06. Botão magnético ---------- */
+  if (fine) $$('[data-magnetic]').forEach(el => {
+    const s = +(el.dataset.magnetic || .35);
+    const xTo = gsap.quickTo(el, 'x', { duration: .6, ease: 'power3' }), yTo = gsap.quickTo(el, 'y', { duration: .6, ease: 'power3' });
+    el.addEventListener('pointermove', e => { const r = el.getBoundingClientRect(); xTo((e.clientX - r.left - r.width / 2) * s); yTo((e.clientY - r.top - r.height / 2) * s); });
+    el.addEventListener('pointerleave', () => { xTo(0); yTo(0); });
+  });
+
+  /* ---------- E07. Tilt 3D ---------- */
+  if (fine) $$('[data-tilt]').forEach(el => {
+    const max = +(el.dataset.tilt || 8);
+    el.addEventListener('pointermove', e => {
+      const r = el.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+      gsap.to(el, { rotateY: (px - .5) * max * 2, rotateX: (.5 - py) * max * 2, transformPerspective: 900, duration: .5, ease: 'power2.out' });
+      el.style.setProperty('--gx', px * 100 + '%'); el.style.setProperty('--gy', py * 100 + '%');
+    });
+    el.addEventListener('pointerleave', () => gsap.to(el, { rotateX: 0, rotateY: 0, duration: .9, ease: 'elastic.out(1,.5)' }));
+  });
+
+  /* ---------- E10. Stack cards ---------- */
+  $$('.stack-cards').forEach(wrap => {
+    const cards = $$('.stack-card', wrap);
+    cards.forEach((c, i) => {
+      c.style.setProperty('--i', i);
+      if (i === cards.length - 1) return;
+      gsap.to(c, { scale: .9 + i * .015, filter: 'brightness(.7)', ease: 'none',
+        scrollTrigger: { trigger: cards[i + 1], start: 'top bottom', end: () => `top ${innerHeight * .12 + (i + 1) * 18}px`, scrub: true } });
+    });
+  });
+
+  /* ---------- E13. Texto que acende ---------- */
+  $$('[data-scrub-text]').forEach(el => {
+    const w = split(el);
+    gsap.fromTo(w, { opacity: .14 }, { opacity: 1, stagger: .1, ease: 'none',
+      scrollTrigger: { trigger: el, start: 'top 80%', end: 'bottom 45%', scrub: true } });
+  });
+
+  /* ---------- E14. Barra de progresso ---------- */
+  const prog = document.querySelector('.progress');
+  if (prog) gsap.to(prog, { scaleX: 1, ease: 'none', scrollTrigger: { trigger: document.body, start: 'top top', end: 'bottom bottom', scrub: .3 } });
+
+  addEventListener('load', () => ScrollTrigger.refresh());
+  if (document.fonts) document.fonts.ready.then(() => ScrollTrigger.refresh());
+})();
+</script>
+<script>
+/* ================= BACKGROUND B6 (onda WebGL) ================= */
+(() => {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const hexRgb = (h) => { h = h.replace('#', ''); if (h.length === 3) h = [...h].map(c => c + c).join(''); const n = parseInt(h, 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; };
+  const whenVisible = (el, start, stop) => new IntersectionObserver(([e]) => e.isIntersecting ? start() : stop()).observe(el);
+
+  document.querySelectorAll('canvas[data-bg="shader"]').forEach(cv => {
+    const gl = cv.getContext('webgl', { premultipliedAlpha: false, antialias: false });
+    if (!gl) { cv.style.background = `radial-gradient(ellipse at 50% 60%, ${css('--accent')}55, transparent 70%)`; return; }
+    const vs = `attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}`;
+    const fs = `precision highp float;uniform vec2 r;uniform float t;uniform vec3 c1;uniform vec3 c2;uniform vec3 bg;uniform float off;
+      void main(){vec2 uv=gl_FragCoord.xy/r;vec2 p=uv*2.-1.;p.x*=r.x/r.y;
+        float y=p.y+.15*sin(p.x*1.4+t*.35);
+        for(float i=1.;i<6.;i++){y+=.12/i*sin(i*1.9*p.x+t*.32*i+i*1.3);}
+        float d=abs(y+off+.1*p.x);
+        float core=exp(-d*d*120.);float halo=exp(-d*d*7.);
+        vec3 col=bg+mix(c1,c2,smoothstep(-1.2,1.2,p.x+.3*sin(t*.2)))*(halo*.4+core*.75)+vec3(1.)*core*.15;
+        col*=1.-.35*length(uv-.5);
+        gl_FragColor=vec4(col,1.);}`;
+    const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
+    const pr = gl.createProgram(); gl.attachShader(pr, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(pr); gl.useProgram(pr);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer()); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(pr, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    const U = n => gl.getUniformLocation(pr, n);
+    gl.uniform3fv(U('c1'), hexRgb(cv.dataset.c1 || css('--accent')));
+    gl.uniform3fv(U('c2'), hexRgb(cv.dataset.c2 || css('--cold')));
+    gl.uniform3fv(U('bg'), hexRgb(cv.dataset.bg2 || css('--bg')));
+    gl.uniform1f(U('off'), +(cv.dataset.y ?? .55));
+    const dpr = Math.min(devicePixelRatio, 1.5); let raf = null, t0 = performance.now();
+    const size = () => { cv.width = cv.clientWidth * dpr; cv.height = cv.clientHeight * dpr; gl.viewport(0, 0, cv.width, cv.height); gl.uniform2f(U('r'), cv.width, cv.height); };
+    const frame = () => { gl.uniform1f(U('t'), (performance.now() - t0) / 1000 + 10); gl.drawArrays(gl.TRIANGLES, 0, 3); if (!reduce) raf = requestAnimationFrame(frame); };
+    size(); new ResizeObserver(() => { size(); if (reduce) frame(); }).observe(cv);
+    whenVisible(cv, () => { if (!raf) frame(); }, () => { cancelAnimationFrame(raf); raf = null; });
+  });
+})();
+</script>
+<!-- ================= 3D T2 (globo de partículas) ================= -->
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const mobile = innerWidth < 768;
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+document.querySelectorAll('canvas[data-3d="particulas"]').forEach(canvas => {
+  const accent = new THREE.Color(canvas.dataset.color || cssVar('--accent'));
+  const accent2 = new THREE.Color(canvas.dataset.color2 || cssVar('--cold'));
+
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, mobile ? 1.5 : 2));
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(40, 1, .1, 100);
+  camera.position.set(0, 0, 7);
+  const group = new THREE.Group(); scene.add(group);
+
+  const N = mobile ? 2500 : 6000, pos = new Float32Array(N * 3), col = new Float32Array(N * 3), c = new THREE.Color();
+  for (let i = 0; i < N; i++) {
+    const y = 1 - (i / (N - 1)) * 2, r = Math.sqrt(1 - y * y), th = i * 2.399963, R = 2 + (Math.random() - .5) * .08;
+    pos.set([Math.cos(th) * r * R, y * R, Math.sin(th) * r * R], i * 3);
+    c.copy(accent).lerp(accent2, (y + 1) / 2); col.set([c.r, c.g, c.b], i * 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  group.add(new THREE.Points(g, new THREE.PointsMaterial({ size: .035, vertexColors: true, transparent: true, opacity: .9,
+    blending: THREE.AdditiveBlending, depthWrite: false })));
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(2.9, .006, 8, 200), new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: .5 }));
+  ring.rotation.x = Math.PI / 2.3; group.add(ring);
+
+  const target = { x: 0, y: 0 }; let scrollP = 0, baseX = 0;
+  addEventListener('pointermove', e => { target.x = (e.clientX / innerWidth - .5); target.y = (e.clientY / innerHeight - .5); });
+  addEventListener('scroll', () => { const r = canvas.getBoundingClientRect(); scrollP = Math.min(1, Math.max(0, -r.top / r.height)); }, { passive: true });
+
+  const resize = () => {
+    const w = canvas.clientWidth, h = canvas.clientHeight; if (!w || !h) return;
+    renderer.setSize(w, h, false); camera.aspect = w / h;
+    camera.position.z = w < 768 ? 9 : 7;
+    baseX = w < 900 ? 0 : +(canvas.dataset.x || 0);
+    camera.updateProjectionMatrix();
+  };
+  new ResizeObserver(resize).observe(canvas); resize();
+
+  const clock = new THREE.Clock(); let raf = null;
+  const tick = () => {
+    const t = clock.getElapsedTime();
+    group.rotation.y += ((target.x * .8 + t * .25) - group.rotation.y) * .05;
+    group.rotation.x += ((target.y * .5 + scrollP * 1.2) - group.rotation.x) * .05;
+    group.position.y = Math.sin(t * .8) * .08 - scrollP * 1.5;
+    group.position.x = baseX;
+    renderer.render(scene, camera);
+    if (!reduce) raf = requestAnimationFrame(tick);
+  };
+  new IntersectionObserver(([e]) => { if (e.isIntersecting) { if (!raf) tick(); } else { cancelAnimationFrame(raf); raf = null; } }).observe(canvas);
+});
+</script>
+</body>
+</html>

@@ -78,7 +78,9 @@ export async function getCandles(env:RuntimeEnv) {
  const day=h1?intraday(h1,candles):null; const ind=indicators(candles); ind.levels={...ind.levels,...intradayLevels(day)};
  const last=candles.at(-1)!;
  const data={candles,ema20:ind.levels.ema20,ema50:ind.levels.ema50,indicators:ind,intraday:day,chart:{m15,h1},sentiment:{m5:gauge(candles),h1:h1?gauge(h1):null,pressure:pressure(candles)},intradayError:h1?null:'Candles H1 indisponíveis: níveis do dia e tendência H1 fora desta análise.',updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
- candlesCache={until:nextClose(),data};
+ // If the provider has not published the bar that just closed yet, retry in 30s instead of holding stale data for 5 min.
+ const behind=last.time+300000<Math.floor(Date.now()/300000)*300000;
+ candlesCache={until:behind?Date.now()+30000:nextClose(),data};
  return data;
 }
 // The aggregator asks clients to poll sparingly; one fetch per instance every 15 minutes.
@@ -248,6 +250,7 @@ export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response
  const fns:Record<string,()=>Promise<unknown>>={'/api/quote':getQuote,'/api/cot':getCot,'/api/news':()=>getNews('news'),'/api/fed':()=>getNews('fed'),'/api/candles':()=>getCandles(env),'/api/calendar':getCalendar};
  if(!fns[path])return response({error:'Não encontrado'},404);
  if(request.method!=='GET')return response({error:'Método inválido'},405);
- const ttl=path==='/api/candles'?Math.ceil((nextClose()-Date.now())/1000):path==='/api/calendar'?900:0;
+ // The CDN keeps candles exactly as long as this instance's cache, including the short retry window.
+ const ttl=path==='/api/candles'?Math.max(1,Math.ceil(((candlesCache?.until??nextClose())-Date.now())/1000)):path==='/api/calendar'?900:0;
  const result=await safe(fns[path]); return response({...result,checkedAt:new Date().toISOString()},result.ok?200:503,ttl);
 }

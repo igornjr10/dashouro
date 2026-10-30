@@ -47,14 +47,22 @@ export async function getNews(kind:'news'|'fed') {
 // Candles only change when an M5 bar closes; refetch after the next close (+20s provider latency) to protect the API quota.
 const nextClose=()=>Math.floor(Date.now()/300000)*300000+320000;
 let candlesCache:{until:number;data:unknown}|null=null;
-async function getSeries(env:RuntimeEnv,interval:'5min'|'1h',size:number,barMs:number):Promise<Candle[]>{
+async function getSeries(env:RuntimeEnv,interval:'5min'|'15min'|'1h',size:number,barMs:number):Promise<Candle[]>{
  const q=await fetchData('https://api.twelvedata.com/time_series?'+new URLSearchParams({symbol:'XAU/USD',interval,outputsize:String(size),timezone:'UTC',apikey:env.TWELVEDATA_API_KEY!}));
- if(q.status==='error'||!Array.isArray(q.values)||q.meta?.symbol!=='XAU/USD'||q.meta?.interval!==interval)throw new Error('Feed '+(interval==='1h'?'H1':'M5')+' indisponível. Verifique o acesso ao XAU/USD no provedor.');
+ if(q.status==='error'||!Array.isArray(q.values)||q.meta?.symbol!=='XAU/USD'||q.meta?.interval!==interval)throw new Error('Feed '+(interval==='1h'?'H1':interval==='15min'?'M15':'M5')+' indisponível. Verifique o acesso ao XAU/USD no provedor.');
  const candles:Candle[]=q.values.map((v:Record<string,string>)=>({time:Date.parse(v.datetime.replace(' ','T')+'Z'),open:number(v.open),high:number(v.high),low:number(v.low),close:number(v.close)})).filter((v:Candle)=>Number.isFinite(v.time)&&v.time+barMs<=Date.now()).sort((a:Candle,b:Candle)=>a.time-b.time);
- if(candles.length<50||candles.some(v=>v.low<=0||v.high<Math.max(v.open,v.close)||v.low>Math.min(v.open,v.close)))throw new Error('Histórico '+(interval==='1h'?'H1':'M5')+' insuficiente ou inválido');
+ if(candles.length<50||candles.some(v=>v.low<=0||v.high<Math.max(v.open,v.close)||v.low>Math.min(v.open,v.close)))throw new Error('Histórico '+(interval==='1h'?'H1':interval==='15min'?'M15':'M5')+' insuficiente ou inválido');
  return candles;
 }
 // H1 bars feed the day/session levels and the higher-timeframe trend; one fetch per hour per instance (~24/day).
+// M15 for the chart only, refetched after each 15-minute close (~96 calls/day).
+let m15Cache:{until:number;data:Candle[]}|null=null;
+async function getM15(env:RuntimeEnv){
+ if(m15Cache&&Date.now()<m15Cache.until)return m15Cache.data;
+ const data=await getSeries(env,'15min',200,900000);
+ m15Cache={until:Math.floor(Date.now()/900000)*900000+920000,data};
+ return data;
+}
 let h1Cache:{until:number;data:Candle[]}|null=null;
 async function getH1(env:RuntimeEnv){
  if(h1Cache&&Date.now()<h1Cache.until)return h1Cache.data;
@@ -65,10 +73,11 @@ async function getH1(env:RuntimeEnv){
 export async function getCandles(env:RuntimeEnv) {
  if(!env.TWELVEDATA_API_KEY) throw new Error('Feed de candles M5 não conectado');
  if(candlesCache&&Date.now()<candlesCache.until)return candlesCache.data;
- const [candles,h1]=await Promise.all([getSeries(env,'5min',100,300000),getH1(env).catch(()=>null)]);
+ // One credit per call regardless of size, so ~25h of M5 costs the same as 8h.
+ const [candles,h1,m15]=await Promise.all([getSeries(env,'5min',300,300000),getH1(env).catch(()=>null),getM15(env).catch(()=>null)]);
  const day=h1?intraday(h1,candles):null; const ind=indicators(candles); ind.levels={...ind.levels,...intradayLevels(day)};
  const last=candles.at(-1)!;
- const data={candles,ema20:ind.levels.ema20,ema50:ind.levels.ema50,indicators:ind,intraday:day,sentiment:{m5:gauge(candles),h1:h1?gauge(h1):null,pressure:pressure(candles)},intradayError:h1?null:'Candles H1 indisponíveis: níveis do dia e tendência H1 fora desta análise.',updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
+ const data={candles,ema20:ind.levels.ema20,ema50:ind.levels.ema50,indicators:ind,intraday:day,chart:{m15,h1},sentiment:{m5:gauge(candles),h1:h1?gauge(h1):null,pressure:pressure(candles)},intradayError:h1?null:'Candles H1 indisponíveis: níveis do dia e tendência H1 fora desta análise.',updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
  candlesCache={until:nextClose(),data};
  return data;
 }

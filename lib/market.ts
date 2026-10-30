@@ -6,6 +6,7 @@ import {parseSignal,ruleCheck} from './signals';
 import {gauge,pressure} from './sentiment';
 import {crtSetups} from './crt';
 import {getOfficialCalendar} from './official-calendar';
+import {getBtcCandles,getBtcQuote} from './btc';
 // Saving is best effort: a database failure never blocks the analysis the user asked for.
 const persist=async(env:RuntimeEnv,request:Request,write:()=>Promise<unknown>)=>{
  if(!storeEnabled(env)||!authorized(request,env))return false;
@@ -284,6 +285,11 @@ async function route(request:Request,env:RuntimeEnv):Promise<Response>{
    // Top-level fields keep the 4h call so the chart, alerts and older clients work unchanged; `short` carries the 1h call.
    return response({...dual.long,short:dual.short,model:result.model,provider:result.provider,at,reference,eventSoon,event1h,indicators:ind,saved});
   }catch(e){return response({error:e instanceof RouterError?e.message:'A conexão com OpenRouter falhou ou excedeu o tempo. Tente mais tarde.'},e instanceof RouterError?e.status:502)}
+ }
+ // Bitcoin read-only view (Coinbase), separate paths so the gold responses and their CDN entries stay unchanged.
+ if((path==='/api/btc/candles'||path==='/api/btc/quote')&&request.method==='GET'){
+  const result=await safe(path==='/api/btc/candles'?getBtcCandles:getBtcQuote);
+  return response({...result,checkedAt:new Date().toISOString()},result.ok?200:503,path==='/api/btc/candles'?Math.max(1,Math.ceil((nextClose()-Date.now())/1000)):0);
  }
  const fns:Record<string,()=>Promise<unknown>>={'/api/quote':getQuote,'/api/cot':getCot,'/api/news':()=>getNews('news'),'/api/fed':()=>getNews('fed'),'/api/candles':()=>getCandles(env),'/api/calendar':getCalendar};
  if(!fns[path])return response({error:'Não encontrado'},404);

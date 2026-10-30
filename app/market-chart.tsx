@@ -31,7 +31,7 @@ type Bar=Candle&{live?:boolean};
 
 // Our own chart: the exact candles, levels, predictions and plan the AI and the rules work with, on one price scale.
 // The chart is created once and its series are updated in place, so new candles keep the user's zoom and scroll.
-export function MarketChart({series,levels,insight,predictions,events,plan,live,crt}:{series:Record<Tf,Candle[]|null>;levels:Levels|null;insight:Insight|null;predictions:Prediction[];events:CalEvent[];plan:ChartPlan|null;live:{price:number;time:number}|null;crt:{high:number;low:number}|null}){
+export function MarketChart({series,levels,insight,predictions,events,plan,live,crt,asset='xau'}:{asset?:'xau'|'btc';series:Record<Tf,Candle[]|null>;levels:Levels|null;insight:Insight|null;predictions:Prediction[];events:CalEvent[];plan:ChartPlan|null;live:{price:number;time:number}|null;crt:{high:number;low:number}|null}){
  const box=useRef<HTMLDivElement>(null), api=useRef<Api|null>(null), shownTf=useRef<Tf|null>(null), bars=useRef(new Map<number,Bar>());
  const [ready,setReady]=useState(false),[tf,setTf]=useState<Tf>('5'),[on,setOn]=useState<Record<Layer,boolean>>(DEFAULT_ON),[hover,setHover]=useState<Bar|null>(null),[liveSeen,setLiveSeen]=useState<{key:string;high:number;low:number}|null>(null);
  // Mount-time read of this browser's layer choices.
@@ -146,9 +146,9 @@ export function MarketChart({series,levels,insight,predictions,events,plan,live,
    <div className="timeframes">{(['5','15','60'] as Tf[]).map(t=><button key={t} className={tf===t?'on':''} disabled={!series[t]?.length} onClick={()=>pickTf(t)}>{t==='60'?'H1':'M'+t}</button>)}</div>
    <div className="layer-toggles">{LAYERS.map(([k,l])=><button key={k} className={on[k]?'on':''} aria-pressed={on[k]} onClick={()=>toggle(k)}>{l}</button>)}</div>
   </div>
-  {bar&&<div className="ohlc">{bar.live&&<span className="live-tag">AO VIVO · Gold API</span>}{fmtTime(Math.floor(bar.time/1000),{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · A <b>{n2(bar.open)}</b> M <b>{n2(bar.high)}</b> m <b>{n2(bar.low)}</b> F <b className={change>=0?'green':'red'}>{n2(bar.close)}</b> <span className={change>=0?'green':'red'}>{change>=0?'+':''}{n2(change)} ({change>=0?'+':''}{Math.round(change/0.1)} pips)</span></div>}
+  {bar&&<div className="ohlc">{bar.live&&<span className="live-tag">AO VIVO · {asset==='btc'?'Coinbase':'Gold API'}</span>}{fmtTime(Math.floor(bar.time/1000),{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · A <b>{n2(bar.open)}</b> M <b>{n2(bar.high)}</b> m <b>{n2(bar.low)}</b> F <b className={change>=0?'green':'red'}>{n2(bar.close)}</b> <span className={change>=0?'green':'red'}>{change>=0?'+':''}{n2(change)}{asset==='xau'?` (${change>=0?'+':''}${Math.round(change/0.1)} pips)`:` USD (${change>=0?'+':''}${(change/bar.open*100).toFixed(2)}%)`}</span></div>}
   <div className="chart-surface own-chart" ref={box}/>
-  <div className="session-legend">{on.sessions&&<><span><i style={{background:'rgba(79,154,168,0.5)'}}/>Ásia</span><span><i style={{background:'rgba(216,184,117,0.5)'}}/>Londres</span><span><i style={{background:'rgba(155,127,196,0.5)'}}/>Nova York</span></>}<span><i className="lg-live"/>Candle em formação: Gold API a cada 30 s, fora da análise da IA</span><span className="muted">horário de Brasília</span></div>
+  <div className="session-legend">{on.sessions&&<><span><i style={{background:'rgba(79,154,168,0.5)'}}/>Ásia</span><span><i style={{background:'rgba(216,184,117,0.5)'}}/>Londres</span><span><i style={{background:'rgba(155,127,196,0.5)'}}/>Nova York</span></>}<span><i className="lg-live"/>Candle em formação: {asset==='btc'?'Coinbase':'Gold API'} a cada 30 s{asset==='xau'?', fora da análise da IA':''}</span><span className="muted">horário de Brasília</span></div>
  </div>;
 }
 

@@ -7,7 +7,10 @@ type Ref={name:string;price:number};
 type Result={
  side:Side; verdict:'favoravel'|'ressalvas'|'desfavoravel'|'nao-operar'; block:string|null; passed:number; total:number;
  checks:{key:string;label:string;ok:boolean;detail:string}[]; price:number; atr:number; at:string; candlesAt:string;
- references:{stop:Ref;target:Ref|null;risk:number;reward:number|null;rr:number|null};
+ references:{stop:Ref&{pips?:number};target:Ref|null;risk:number;reward:number|null;rr:number|null};
+ plan?:{session:string;capPips:number;slPips:number;usdPerPipPerLot:number;management:string[];
+  tps:{name:string;pips:number;price:number;range?:number[]}[];
+  layer:{from:number;to:number;avg:number;lossAtSlPips:number}|null};
  eventWarning:{title:string;minutes:number}|null; note:string;
  explanation:{summary:string;pros:string[];cons:string[];context:string}|null; explanationError?:string; model?:string;
 };
@@ -44,11 +47,16 @@ export function TradeResult({result,error,onClose,onPlan}:{result:Result|null;er
    <div><small>VEREDITO DAS REGRAS</small><strong>{verdicts[result.verdict]}</strong><em>{result.block?`Bloqueado: ${result.block}`:`${result.passed} de ${result.total} critérios a favor`}</em></div>
    <div className="verdict-refs">
     <div><small>Preço (fech. M5)</small><strong>{num(result.price)}</strong></div>
-    <div><small>Stop técnico</small><strong>{num(ref.stop.price)}</strong><em>{ref.stop.name} · risco {num(ref.risk)}</em></div>
-    <div><small>Alvo técnico</small><strong>{ref.target?num(ref.target.price):'—'}</strong><em>{ref.target?`${ref.target.name} · ${num(ref.reward!)}`:'sem nível na janela'}</em></div>
-    <div><small>Risco/retorno</small><strong>{ref.rr===null?'—':num(ref.rr)}</strong></div>
+    <div><small>Risco/retorno até o TP2</small><strong>{ref.rr===null?'—':num(ref.rr)}</strong></div>
    </div>
   </div>
+  {result.plan&&<div className="rule-plan">
+   <div className="rule-row rule-sl"><small>SL · sessão {result.plan.session} (máx. {result.plan.capPips} pips)</small><strong>{num(ref.stop.price)}</strong><em>{result.plan.slPips} pips · {ref.stop.name} · {num(result.plan.slPips*result.plan.usdPerPipPerLot)} USD por lote</em></div>
+   {result.plan.tps.map(t=><div key={t.name} className="rule-row rule-tp"><small>{t.name} · {t.range?'40–50':t.name==='TP3'?'80+':t.pips} pips</small><strong>{t.range?`${num(t.range[0])} – ${num(t.range[1])}`:num(t.price)}</strong><em>{num(t.pips*result.plan!.usdPerPipPerLot)} USD por lote{t.name==='TP1'?' · depois, SL no BE':''}</em></div>)}
+   {result.plan.layer?<div className="rule-row rule-layer"><small>Camada de proteção (mesmo lote, mesmo SL)</small><strong>{num(result.plan.layer.from)} – {num(result.plan.layer.to)}</strong><em>preço médio ≈ {num(result.plan.layer.avg)} · se o SL bater com as duas: −{result.plan.layer.lossAtSlPips} pips ({num(result.plan.layer.lossAtSlPips*result.plan.usdPerPipPerLot)} USD por lote)</em></div>
+    :<div className="rule-row rule-layer"><small>Camada de proteção</small><strong>—</strong><em>o SL está perto demais para caber a camada de 10–20 pips</em></div>}
+   <ul className="rule-steps">{result.plan.management.map((m,i)=><li key={i}>{m}</li>)}</ul>
+  </div>}
   {result.eventWarning&&<div className="bias-warning"><AlertTriangle size={14}/>{result.eventWarning.title} em {result.eventWarning.minutes} min (agenda de agregador).</div>}
   <div className="check-list">{result.checks.map(c=><div key={c.key} className="check-row">{c.ok?<Check size={15} className="green"/>:<X size={15} className="red"/>}<div><strong>{c.label}</strong><small>{c.detail}</small></div></div>)}</div>
   {ex?<div className="trade-explain"><p>{ex.summary}</p>

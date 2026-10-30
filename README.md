@@ -38,7 +38,7 @@ The default chart (Lightweight Charts) draws the same Twelve Data candles the AI
 ## Server secrets, configured only in Sites
 
 OPENROUTER_API_KEY — optional server secret. Never reuses the prior OpenAI key.
-Model is locked to openrouter/free with provider max_price prompt/completion = 0 and data_collection = deny. No paid fallback or paid web-search plugins.
+Models are free only, tried in order through OpenRouter fallbacks: dots-studio/dots-3-note-preview:free, cohere/north-mini-code:free, then the openrouter/free router (see FREE_MODELS in lib/openrouter.ts for the benchmark notes), with provider max_price prompt/completion = 0 and data_collection = deny. Free NVIDIA/Poolside tiers are unavailable because they require allowing training on prompts. max_tokens 8000 with reasoning capped at 1500 tokens, because free reasoning models otherwise exhaust the budget before answering. No paid fallback or paid web-search plugins.
 TWELVEDATA_API_KEY — configured locally (.env.local) and in Vercel; plan has XAU/USD access.
 
 Never place keys in source, URL logs or hosting manifest. The only client storage exception is the user's own OpenRouter key when they tick "Lembrar neste navegador" (see below).

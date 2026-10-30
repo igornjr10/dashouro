@@ -1,4 +1,8 @@
 export const FREE_MODEL = 'openrouter/free';
+// Benchmarked on the real prompt (Oct 2026): dots-3-note answered 3/3 in 21–30s; cohere north-mini-code is fast but
+// dropped or timed out 2 of 4; Gemma was rate-limited upstream every time; NVIDIA/Poolside free tiers require allowing
+// training on prompts, which data_collection:'deny' rules out. OpenRouter tries these in order, then the free router.
+export const FREE_MODELS = ['dots-studio/dots-3-note-preview:free','cohere/north-mini-code:free',FREE_MODEL];
 
 export class RouterError extends Error {
  constructor(message:string, public status=502){super(message)}
@@ -35,7 +39,7 @@ export async function generateInsight(key:string,instructions:string,context:unk
   headers:{'Content-Type':'application/json',Authorization:'Bearer '+key,'X-OpenRouter-Title':'Aurum'},
   // Free models are often reasoning models whose thinking counts against max_tokens (one spent ~2.9k of 4k thinking and
   // ran out mid-answer). Cap the thinking where supported and leave ample room for the answer.
-  body:JSON.stringify({model:FREE_MODEL,max_tokens:8000,reasoning:{max_tokens:1500,exclude:true},stream:false,...(json?{response_format:{type:'json_object'}}:{}),
+  body:JSON.stringify({models:FREE_MODELS,max_tokens:8000,reasoning:{max_tokens:1500,exclude:true},stream:false,...(json?{response_format:{type:'json_object'}}:{}),
    provider:{max_price:{prompt:0,completion:0},data_collection:'deny'},
    messages:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(context)}]})
  });

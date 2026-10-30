@@ -11,7 +11,7 @@ type Call={
 };
 // Top-level fields are the 4h call; `short` is the 1h call (absent in answers from before the split).
 export type Insight=Call&{
- short?:Call; event1h?:boolean;
+ short?:Call; event1h?:boolean; asset?:'xau'|'btc';
  analysis:string; model:string; at:string; eventSoon:boolean;
  reference:{price:number;time:string;source:string}|null;
 };

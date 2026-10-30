@@ -4,6 +4,9 @@ import {checkTrade} from './trade-check';
 import {authorized,history,saveCheck,savePrediction,saveSignal,scoreSignals,signalHistory,storeEnabled,type StoreEnv} from './store';
 import {parseSignal,ruleCheck} from './signals';
 import {gauge,pressure} from './sentiment';
+import {crtSetups} from './crt';
+import {getOfficialCalendar} from './official-calendar';
+import {getBtcCandles,getBtcQuote} from './btc';
 // Saving is best effort: a database failure never blocks the analysis the user asked for.
 const persist=async(env:RuntimeEnv,request:Request,write:()=>Promise<unknown>)=>{
  if(!storeEnabled(env)||!authorized(request,env))return false;
@@ -77,7 +80,7 @@ export async function getCandles(env:RuntimeEnv) {
  const [candles,h1,m15]=await Promise.all([getSeries(env,'5min',300,300000),getH1(env).catch(()=>null),getM15(env).catch(()=>null)]);
  const day=h1?intraday(h1,candles):null; const ind=indicators(candles); ind.levels={...ind.levels,...intradayLevels(day)};
  const last=candles.at(-1)!;
- const data={candles,ema20:ind.levels.ema20,ema50:ind.levels.ema50,indicators:ind,intraday:day,chart:{m15,h1},sentiment:{m5:gauge(candles),h1:h1?gauge(h1):null,pressure:pressure(candles)},intradayError:h1?null:'Candles H1 indisponíveis: níveis do dia e tendência H1 fora desta análise.',updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
+ const data={candles,ema20:ind.levels.ema20,ema50:ind.levels.ema50,indicators:ind,intraday:day,chart:{m15,h1},crt:crtSetups(candles).slice(-3),sentiment:{m5:gauge(candles),h1:h1?gauge(h1):null,pressure:pressure(candles)},intradayError:h1?null:'Candles H1 indisponíveis: níveis do dia e tendência H1 fora desta análise.',updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
  // If the provider has not published the bar that just closed yet, retry in 30s instead of holding stale data for 5 min.
  const behind=last.time+300000<Math.floor(Date.now()/300000)*300000;
  candlesCache={until:behind?Date.now()+30000:nextClose(),data};
@@ -85,13 +88,22 @@ export async function getCandles(env:RuntimeEnv) {
 }
 // The aggregator asks clients to poll sparingly; one fetch per instance every 15 minutes.
 let calendarCache:{at:number;data:unknown}|null=null;
+// Official BLS/BEA/Fed releases first; the aggregator only fills what the official calendars do not cover (Census
+// retail sales, ISM, jobless claims...) and anything at the same minute as an official release is dropped as a duplicate.
 export async function getCalendar() {
  if(calendarCache&&Date.now()-calendarCache.at<900000)return calendarCache.data;
- const rows=await fetchData(links.calendar); if(!Array.isArray(rows))throw new Error('Agenda indisponível');
- const events=rows.filter(r=>r?.country==='USD'&&(r.impact==='High'||r.impact==='Medium')&&typeof r.title==='string'&&Number.isFinite(Date.parse(r.date)))
-  .map(r=>({title:String(r.title),date:new Date(Date.parse(r.date)).toISOString(),impact:r.impact as 'High'|'Medium',forecast:typeof r.forecast==='string'?r.forecast:'',previous:typeof r.previous==='string'?r.previous:''}))
-  .sort((a,b)=>Date.parse(a.date)-Date.parse(b.date));
- const data={events,source:'ForexFactory · agregador (faireconomy)',url:'https://www.forexfactory.com/calendar',fetchedAt:new Date().toISOString(),note:'Semana atual, eventos USD de impacto alto e médio. Horários e previsões de agregador não oficial; sem valores realizados. Confirme no Fed, BLS ou BEA.'};
+ const [agg,off]=await Promise.all([fetchData(links.calendar).catch(()=>null),getOfficialCalendar().catch(()=>null)]);
+ if(!Array.isArray(agg)&&!off)throw new Error('Agenda indisponível');
+ const now=Date.now();
+ const official=(off?.events??[]).filter(e=>{const t=Date.parse(e.date);return t>=now-2*86400000&&t<=now+14*86400000}).map(e=>({title:e.title,date:e.date,impact:e.impact,forecast:'',previous:'',official:true,source:e.source,url:e.url}));
+ const aggregator=(Array.isArray(agg)?agg:[]).filter(r=>r?.country==='USD'&&(r.impact==='High'||r.impact==='Medium')&&typeof r.title==='string'&&Number.isFinite(Date.parse(r.date)))
+  .map(r=>({title:String(r.title),date:new Date(Date.parse(r.date)).toISOString(),impact:r.impact as 'High'|'Medium',forecast:typeof r.forecast==='string'?r.forecast:'',previous:typeof r.previous==='string'?r.previous:'',official:false,source:'agregador',url:'https://www.forexfactory.com/calendar'}))
+  .filter(e=>!official.some(o=>Math.abs(Date.parse(o.date)-Date.parse(e.date))<10*60000));
+ const events=[...official,...aggregator].sort((x,y)=>Date.parse(x.date)-Date.parse(y.date));
+ const st=off?.sources??{};
+ const data={events,sources:st,source:'Oficial: BLS, BEA e Fed · complemento: ForexFactory (agregador)',url:'https://www.bls.gov/schedule/news_release/',fetchedAt:new Date().toISOString(),
+  verified:!!(st.BLS?.ok&&st.BEA?.ok&&st.Fed?.ok),
+  note:'Horários oficiais do BLS (CPI, Payroll, PPI, JOLTS), BEA (PIB, PCE, balança) e Fed (FOMC). Os demais eventos vêm de agregador não oficial, sem valores realizados.'+(Object.entries(st).filter(([,v])=>!v.ok).map(([k,v])=>' '+k+' indisponível ('+v.error+').').join(''))};
  calendarCache={at:Date.now(),data};
  return data;
 }
@@ -103,9 +115,9 @@ São duas leituras independentes do viés de direção mais provável, nenhuma �
 Os dois podem discordar, e isso é informação útil: diga na análise quando discordam e por quê.
 Calibração de cada um: se os sinais do seu prazo conflitarem ou candlesM5.indicators for null, use "neutro" com confiança "baixa". short só tem confiança "alta" quando trend, ema20Slope1h, change1h, sentiment.m5 e pressure apontarem para o mesmo lado e o rsi14 estiver entre 25 e 75; contra a tendência M5 a confiança máxima é "media". long só tem confiança "alta" quando h1.trend, sentiment.h1, change4h e trend concordarem; contra a tendência H1 a confiança máxima é "media". Se highImpactUsdWithin1h for true, o short tem confiança máxima "media"; se highImpactUsdWithin4h for true, o long também, e o evento deve aparecer nos drivers.
 drivers: até 3 por leitura, do mais forte para o mais fraco, cada um com fonte e data. invalidation: para alta, condition "abaixo" e um nível abaixo do preço; para baixa, "acima" e um nível acima; para neutro, null. Informe só a chave do nível, nunca um preço; para o short prefira níveis próximos (high2h, low2h, ema20).
-analysis: português, até 160 palavras, quatro parágrafos curtos separados por linha em branco: Contexto, Evidências (1h e 4h), Cenários condicionais e Lacunas. Cada driver com no máximo 15 palavras. Diga onde o preço está em relação aos níveis do dia. COT é semanal de futuros e notícias são só manchetes: contexto secundário. Cite fonte e data em cada conclusão factual. Use apenas números presentes nos dados anexados; não invente preços, eventos, consenso, probabilidades, fluxo, suportes ou resistências. A agenda econômica vem de agregador não oficial: use-a só para alertar eventos USD próximos. Não recomende compra, venda, entrada, stop ou alvo. A cotação spot não é preço executável. Não alegue acesso visual ao TradingView. Termine lembrando de validar spread e condições na corretora.`;
+analysis: português, até 160 palavras, quatro parágrafos curtos separados por linha em branco: Contexto, Evidências (1h e 4h), Cenários condicionais e Lacunas. Cada driver com no máximo 15 palavras. Diga onde o preço está em relação aos níveis do dia. COT é semanal de futuros e notícias são só manchetes: contexto secundário. Cite fonte e data em cada conclusão factual. Use apenas números presentes nos dados anexados; não invente preços, eventos, consenso, probabilidades, fluxo, suportes ou resistências. Na agenda, eventos com official=true vêm do BLS, BEA ou Fed (horários oficiais); os demais vêm de agregador não oficial. Use a agenda para alertar eventos USD próximos. Não recomende compra, venda, entrada, stop ou alvo. A cotação spot não é preço executável. Não alegue acesso visual ao TradingView. Termine lembrando de validar spread e condições na corretora.`;
 const CHECK_PROMPT=`Escreva TODO o texto em português do Brasil, nunca em inglês. Você explica para Igor a avaliação de uma operação em XAU/USD que ele está considerando (check.side: buy = compra, sell = venda). O veredito em check.verdict foi calculado por regras fixas e NÃO pode ser alterado nem contestado: favoravel, ressalvas, desfavoravel ou nao-operar. Responda SOMENTE com JSON válido: {"summary":"uma frase em português explicando o veredito","pros":["até 3 pontos a favor"],"cons":["até 3 pontos contra ou riscos"],"context":"até 80 palavras sobre notícias, Fed e COT que reforçam ou enfraquecem a operação, citando fonte e data"}.
-Use só números presentes nos dados. Não invente preços, alvos, probabilidades ou eventos. Não diga para comprar nem vender: descreva os fatores e deixe a decisão com ele. Notícias são só manchetes; COT é semanal; a agenda é de agregador não oficial. Se check.eventWarning existir, ele deve aparecer em cons.
+Use só números presentes nos dados. Não invente preços, alvos, probabilidades ou eventos. Não diga para comprar nem vender: descreva os fatores e deixe a decisão com ele. Notícias são só manchetes; COT é semanal; na agenda, official=true é horário oficial (BLS/BEA/Fed) e o resto é agregador. Se check.eventWarning existir, ele deve aparecer em cons.
 Igor opera scalping e day trade com regras próprias, já aplicadas em check.plan: 1 pip = 0,10 USD; SL máximo de 30 pips na Ásia e em Londres e 50 em Nova York; TP1 20, TP2 40–50 e TP3 80+ pips; camada de proteção com mesmo lote e mesmo SL quando a operação está 10–20 pips contra; no TP1 o SL vai para o ponto de equilíbrio. Fale em pips, use os preços de check.plan e aponte em cons se o stop técnico não coube no limite da sessão, se há um nível antes do TP1, ou se o prejuízo com a camada (check.plan.layer.lossAtSlPips) for alto.`;
 function parseExplanation(text:string){
  const s=text.replace(/```(?:json)?/g,''); const a=s.indexOf('{'), b=s.lastIndexOf('}');
@@ -273,6 +285,11 @@ async function route(request:Request,env:RuntimeEnv):Promise<Response>{
    // Top-level fields keep the 4h call so the chart, alerts and older clients work unchanged; `short` carries the 1h call.
    return response({...dual.long,short:dual.short,model:result.model,provider:result.provider,at,reference,eventSoon,event1h,indicators:ind,saved});
   }catch(e){return response({error:e instanceof RouterError?e.message:'A conexão com OpenRouter falhou ou excedeu o tempo. Tente mais tarde.'},e instanceof RouterError?e.status:502)}
+ }
+ // Bitcoin read-only view (Coinbase), separate paths so the gold responses and their CDN entries stay unchanged.
+ if((path==='/api/btc/candles'||path==='/api/btc/quote')&&request.method==='GET'){
+  const result=await safe(path==='/api/btc/candles'?getBtcCandles:getBtcQuote);
+  return response({...result,checkedAt:new Date().toISOString()},result.ok?200:503,path==='/api/btc/candles'?Math.max(1,Math.ceil((nextClose()-Date.now())/1000)):0);
  }
  const fns:Record<string,()=>Promise<unknown>>={'/api/quote':getQuote,'/api/cot':getCot,'/api/news':()=>getNews('news'),'/api/fed':()=>getNews('fed'),'/api/candles':()=>getCandles(env),'/api/calendar':getCalendar};
  if(!fns[path])return response({error:'Não encontrado'},404);

@@ -36,11 +36,11 @@ function Table({title,g}:{title:string;g:G}){
   <tbody>{[...g.oscillators.items,...g.movingAverages.items].map(i=><tr key={i.name}><td>{i.name}</td><td>{i.value.toLocaleString('pt-BR')}</td><td className={i.vote==='compra'?'green':i.vote==='venda'?'red':'muted'}>{voteName[i.vote]}</td></tr>)}</tbody></table>;
 }
 
-export function SentimentCard({s}:{s:Sentiment|null}){
+export function SentimentCard({s,asset='xau'}:{s:Sentiment|null;asset?:'xau'|'btc'}){
  if(!s)return null;
  const p=s.pressure;
  return <section className="panel sentiment-card">
-  <div className="panel-heading"><h2><GaugeIcon size={17}/>Força compradora × vendedora</h2><span className="micro">RESUMO TÉCNICO · CANDLES FECHADOS</span></div>
+  <div className="panel-heading"><h2><GaugeIcon size={17}/>Força compradora × vendedora · {asset==='btc'?'BTC/USD':'XAU/USD'}</h2><span className="micro">RESUMO TÉCNICO · CANDLES FECHADOS</span></div>
   <div className="meters"><Meter title="M5 · CURTO PRAZO" g={s.m5}/><Meter title="H1 · TENDÊNCIA DO DIA" g={s.h1}/></div>
   <div className="pressure">
    <div className="pressure-head"><span>Pressão nos últimos {p.bars} candles M5 (~{Math.round(p.bars*5/60)}h)</span><span>{p.bullishCandles} de alta · {p.bearishCandles} de baixa</span></div>
@@ -50,6 +50,6 @@ export function SentimentCard({s}:{s:Sentiment|null}){
    <div className="pressure-legend"><span>Compradores <b>{p.buyPct}%</b></span><span>Vendedores <b>{p.sellPct}%</b></span></div>
   </div>
   <details className="sent-details"><summary>Ver todos os indicadores</summary><div className="sent-tables">{s.m5&&<Table title="M5" g={s.m5}/>}{s.h1&&<Table title="H1" g={s.h1}/>}</div></details>
-  <div className="panel-note">Cada média móvel e oscilador vota compra, venda ou neutro; o saldo dá o rótulo. A pressão mede onde cada candle fechou dentro da própria faixa (perto da máxima = compradores). É leitura técnica dos candles da Twelve Data, não votos de pessoas nem fluxo de ordens: o ouro spot não tem volume centralizado.</div>
+  <div className="panel-note">Cada média móvel e oscilador vota compra, venda ou neutro; o saldo dá o rótulo. A pressão mede onde cada candle fechou dentro da própria faixa (perto da máxima = compradores). {asset==='btc'?'É leitura técnica dos candles da Coinbase, não votos de pessoas nem fluxo de ordens.':'É leitura técnica dos candles da Twelve Data, não votos de pessoas nem fluxo de ordens: o ouro spot não tem volume centralizado.'}</div>
  </section>;
 }

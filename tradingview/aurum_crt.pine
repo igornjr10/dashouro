@@ -1,0 +1,180 @@
+//@version=6
+// Aurum CRT · XAU/USD
+// Same model as the dashboard (lib/crt.ts) and the Python backtest (strategy/):
+// H4 blocks on the New York clock (01, 05, 09, 13, 17, 21). When the block opening at 01, 05 or 09 NY sweeps the
+// high or the low of the previous block and closes back inside its range, the bias is towards the other side.
+// Entry during the next block, on the first close beyond the previous N bars (use on M5). The stop sits beyond
+// those bars plus a buffer; when it is wider than the session cap the setup is marked as outside the rules.
+indicator("Aurum CRT · XAU/USD", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 200)
+
+// ── Igor's rules ──
+pip    = input.float(0.1, "Valor de 1 pip (USD)", group = "Regras")
+capAL  = input.int(30, "SL máximo Ásia/Londres (pips)", group = "Regras")
+capNY  = input.int(50, "SL máximo Nova York (pips)", group = "Regras")
+minSL  = input.int(10, "SL mínimo (pips)", group = "Regras")
+buffer = input.int(3, "Folga além dos candles (pips)", group = "Regras")
+tp1    = input.int(20, "TP1 (pips)", group = "Regras")
+tp2    = input.int(50, "TP2 (pips)", group = "Regras")
+tp3    = input.int(80, "TP3 (pips)", group = "Regras")
+swing  = input.int(2, "Candles da quebra de estrutura", minval = 1, maxval = 10, group = "Entrada")
+layerOn = input.bool(true, "Mostrar camada de proteção (10–20 pips contra)", group = "Entrada")
+keepOld = input.bool(true, "Manter setups anteriores no gráfico", group = "Visual")
+planBars = input.int(48, "Comprimento das linhas do plano (candles)", minval = 6, maxval = 300, group = "Visual")
+
+TZ = "America/New_York"
+HOUR = 3600000
+H4 = 4 * HOUR
+
+// ── H4 block on the New York clock, aligned to 01:00 ──
+nyH = hour(time, TZ)
+blockStart = time - ((nyH + 23) % 4) * HOUR - minute(time, TZ) * 60000 - second(time, TZ) * 1000
+newBlock = bar_index > 0 and blockStart != blockStart[1]
+expectedBars = H4 / (timeframe.in_seconds() * 1000.0)
+
+var float curH = na
+var float curL = na
+var float curC = na
+var int curT = na
+var int curN = 0
+var float p1H = na
+var float p1L = na
+var float p1C = na
+var int p1T = na
+var int p1N = 0
+var float p2H = na
+var float p2L = na
+var int p2T = na
+var int p2N = 0
+
+// Setup in progress
+var int side = 0           // 1 compra, -1 venda
+var bool waiting = false
+var float target = na
+var int setupEnd = na
+
+var array<line> drawnLines = array.new<line>()
+var array<label> drawnLabels = array.new<label>()
+var array<box> drawnBoxes = array.new<box>()
+
+clearOld() =>
+    if not keepOld
+        for l in drawnLines
+            line.delete(l)
+        for l in drawnLabels
+            label.delete(l)
+        for b in drawnBoxes
+            box.delete(b)
+        array.clear(drawnLines)
+        array.clear(drawnLabels)
+        array.clear(drawnBoxes)
+
+addLine(float price, color c, string st, int w) =>
+    l = line.new(bar_index, price, bar_index + planBars, price, color = c, style = st, width = w)
+    array.push(drawnLines, l)
+
+addLabel(float y, string txt, color bg, string st) =>
+    l = label.new(bar_index, y, txt, color = bg, textcolor = color.white, style = st, size = size.small)
+    array.push(drawnLabels, l)
+
+sweepNow = false
+entryNow = false
+
+if na(curT) or newBlock
+    // Shift the completed blocks: p2 = A candidate, p1 = B candidate.
+    if not na(curT)
+        p2H := p1H
+        p2L := p1L
+        p2T := p1T
+        p2N := p1N
+        p1H := curH
+        p1L := curL
+        p1C := curC
+        p1T := curT
+        p1N := curN
+    curH := high
+    curL := low
+    curC := close
+    curT := blockStart
+    curN := 1
+    waiting := false
+
+    bHour = na(p1T) ? -1 : hour(p1T, TZ)
+    if not na(p2T) and (bHour == 1 or bHour == 5 or bHour == 9) and p1T - p2T == H4 and p2N >= expectedBars * 0.8 and p1N >= expectedBars * 0.8
+        up = p1H > p2H
+        dn = p1L < p2L
+        inside = p1C > p2L and p1C < p2H
+        if inside and up != dn
+            clearOld()
+            side := up ? -1 : 1
+            target := up ? p2L : p2H
+            setupEnd := curT + H4
+            waiting := true
+            sweepNow := true
+            bx = box.new(p2T, p2H, setupEnd, p2L, xloc = xloc.bar_time, border_color = color.new(#e0a458, 20), border_style = line.style_dashed, bgcolor = color.new(#e0a458, 92), text = "CRT " + str.tostring(bHour, "00") + "h NY", text_color = color.new(#e0a458, 0), text_size = size.small, text_halign = text.align_left, text_valign = text.align_top)
+            array.push(drawnBoxes, bx)
+            sweptTxt = up ? "Varreu a máxima\nviés de VENDA" : "Varreu a mínima\nviés de COMPRA"
+            addLabel(up ? p1H : p1L, sweptTxt, up ? color.new(#d9574a, 10) : color.new(#2fa57e, 10), up ? label.style_label_down : label.style_label_up)
+            alert("CRT " + str.tostring(bHour, "00") + "h NY: " + (up ? "varreu a máxima, aguardando quebra para VENDA" : "varreu a mínima, aguardando quebra para COMPRA") + " · alvo " + str.tostring(target, format.mintick), alert.freq_once_per_bar_close)
+else
+    curH := math.max(curH, high)
+    curL := math.min(curL, low)
+    curC := close
+    curN += 1
+
+// ── M5 entry: first close beyond the previous `swing` bars, inside the block after the sweep ──
+prevHigh = ta.highest(high, swing)[1]
+prevLow = ta.lowest(low, swing)[1]
+
+if waiting and barstate.isconfirmed
+    if time >= setupEnd
+        waiting := false
+    else
+        broke = side == -1 ? close < prevLow : close > prevHigh
+        if broke
+            waiting := false
+            entry = close
+            inval = side == -1 ? math.max(prevHigh, high) : math.min(prevLow, low)
+            sl = inval - side * buffer * pip
+            slPips = math.round(math.abs(entry - sl) / pip)
+            utcH = hour(time, "UTC")
+            cap = utcH >= 13 and utcH < 21 ? capNY : capAL
+            room = (target - entry) * side / pip
+            word = side == -1 ? "VENDA" : "COMPRA"
+            if slPips > cap
+                addLabel(entry, "CRT fora das regras\nstop " + str.tostring(slPips) + " pips > " + str.tostring(cap), color.new(#6b6f6e, 0), side == -1 ? label.style_label_up : label.style_label_down)
+                alert("CRT " + word + " descartado: stop de " + str.tostring(slPips) + " pips acima do limite de " + str.tostring(cap), alert.freq_once_per_bar_close)
+            else if room < tp1
+                addLabel(entry, "CRT sem espaço\nsó " + str.tostring(math.round(room)) + " pips até o alvo", color.new(#6b6f6e, 0), side == -1 ? label.style_label_up : label.style_label_down)
+            else
+                if slPips < minSL
+                    slPips := minSL
+                    sl := entry - side * minSL * pip
+                final = math.min(tp3, room)
+                pTp1 = entry + side * tp1 * pip
+                pTp2 = entry + side * tp2 * pip
+                pFinal = entry + side * final * pip
+                addLine(entry, color.white, line.style_solid, 1)
+                addLine(sl, #e0604f, line.style_solid, 2)
+                addLine(pTp1, #2fa57e, line.style_solid, 1)
+                if tp2 < final
+                    addLine(pTp2, #2fa57e, line.style_solid, 1)
+                addLine(pFinal, #2fa57e, line.style_solid, 2)
+                if layerOn and slPips - 5 >= 10
+                    addLine(entry - side * 10 * pip, #d8b875, line.style_dotted, 1)
+                    addLine(entry - side * math.min(20, slPips - 5) * pip, #d8b875, line.style_dotted, 1)
+                plan = "CRT " + word + "\nEntrada " + str.tostring(entry, format.mintick) + "\nSL " + str.tostring(sl, format.mintick) + " (" + str.tostring(slPips) + " pips)" + "\nTP1 " + str.tostring(pTp1, format.mintick) + (tp2 < final ? "\nTP2 " + str.tostring(pTp2, format.mintick) : "") + "\n" + (final < tp3 ? "Alvo CRT " : "TP3 ") + str.tostring(pFinal, format.mintick) + "\nNo TP1: SL no BE"
+                addLabel(entry, plan, side == -1 ? color.new(#d9574a, 0) : color.new(#2fa57e, 0), side == -1 ? label.style_label_down : label.style_label_up)
+                entryNow := true
+                alert(plan, alert.freq_once_per_bar_close)
+
+// Generic alert hooks for the "Criar alerta" dialog (the dynamic alert() messages above carry the prices).
+alertcondition(sweepNow, "CRT: varredura confirmada", "CRT: varredura confirmada no XAU/USD")
+alertcondition(entryNow, "CRT: entrada no M5", "CRT: entrada no M5 no XAU/USD")
+
+// ── Timeframe guard ──
+var table warn = table.new(position.top_right, 1, 1)
+if barstate.islast
+    if timeframe.in_seconds() > 900
+        table.cell(warn, 0, 0, "Aurum CRT: use no gráfico M5 (ou M1–M15).\nO H4 é calculado dentro do indicador.", text_color = color.white, bgcolor = color.new(#d9574a, 10), text_size = size.small)
+    else
+        table.clear(warn, 0, 0)

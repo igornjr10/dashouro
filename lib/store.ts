@@ -49,11 +49,11 @@ export async function history(env:StoreEnv,candles:Candle[]|null){
  const [predictions,checks,scored]=await Promise.all([
   rest(env,'predictions?select=*&order=created_at.desc&limit=50',{headers:{Prefer:''}}),
   rest(env,'trade_checks?select=id,created_at,side,verdict,passed,total,price,stop_price,stop_name,target_price,target_name,rr,block,model&order=created_at.desc&limit=30',{headers:{Prefer:''}}),
-  rest(env,'predictions?status=eq.scored&select=bias,confidence,hit&order=created_at.desc&limit=1000',{headers:{Prefer:''}}),
- ]) as [Row[],unknown[],{bias:string;confidence:string;hit:boolean}[]];
+  rest(env,'predictions?status=eq.scored&select=bias,confidence,hit,horizon_hours&order=created_at.desc&limit=1000',{headers:{Prefer:''}}),
+ ]) as [Row[],unknown[],{bias:string;confidence:string;hit:boolean;horizon_hours:number}[]];
  const rate=(rows:{hit:boolean}[])=>({total:rows.length,hits:rows.filter(r=>r.hit).length});
- const group=(k:'bias'|'confidence')=>Object.fromEntries([...new Set(scored.map(r=>r[k]))].map(v=>[v,rate(scored.filter(r=>r[k]===v))]));
- return {predictions,checks,stats:{overall:rate(scored),byBias:group('bias'),byConfidence:group('confidence')}};
+ const group=(k:'bias'|'confidence'|'horizon_hours')=>Object.fromEntries([...new Set(scored.map(r=>r[k]))].map(v=>[v,rate(scored.filter(r=>r[k]===v))]));
+ return {predictions,checks,stats:{overall:rate(scored),byBias:group('bias'),byConfidence:group('confidence'),byHorizon:group('horizon_hours')}};
 }
 
 type SignalRow={id:string;side:'buy'|'sell';entry:number;sl:number;adjusted_sl:number|null;signal_time:string;status:string;my_status:string};

@@ -85,23 +85,38 @@ export type Bias = {
  analysis:string;
 };
 const conf=['baixa','media','alta'] as const;
-// Parses the model's JSON, rejects anything outside the allowed shape and resolves invalidation levels to computed prices so no number comes from the model.
-export function parseBias(text:string, ind:Indicators|null, capConfidence:boolean, h1Trend?:string):Bias|null {
+function extractJson(text:string){
  const s=text.replace(/```(?:json)?/g,''); const a=s.indexOf('{'), b=s.lastIndexOf('}');
  if(a<0||b<=a)return null;
- let j:any; try{j=JSON.parse(s.slice(a,b+1))}catch{return null}
- if(!['alta','baixa','neutro'].includes(j?.bias)||!conf.includes(j?.confidence)||typeof j?.analysis!=='string'||!j.analysis.trim())return null;
+ // eslint-disable-next-line @typescript-eslint/no-explicit-any
+ try{return JSON.parse(s.slice(a,b+1)) as any}catch{return null}
+}
+// One horizon's call. Rejects anything outside the allowed shape and resolves invalidation levels to computed prices,
+// so no number comes from the model. `against` is the trend that, when opposed, caps confidence at "media".
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseOne(j:any,ind:Indicators|null,capConfidence:boolean,horizonHours:number,against?:string):Omit<Bias,'analysis'>|null{
+ if(!['alta','baixa','neutro'].includes(j?.bias)||!conf.includes(j?.confidence))return null;
+ // eslint-disable-next-line @typescript-eslint/no-explicit-any
  const drivers=Array.isArray(j.drivers)?j.drivers.filter((d:any)=>typeof d?.text==='string'&&d.text.trim()&&typeof d?.source==='string').slice(0,3).map((d:any)=>({text:d.text.trim(),source:d.source.trim()})):[];
  let bias:Bias['bias']=j.bias, confidence:Bias['confidence']=j.confidence;
- const horizonHours=Math.min(4,Math.max(1,Math.round(Number(j.horizonHours)||1)));
  if(!ind){bias='neutro';confidence='baixa'}
- const againstH1=(bias==='alta'&&h1Trend==='baixa')||(bias==='baixa'&&h1Trend==='alta');
- if((capConfidence||againstH1)&&confidence==='alta')confidence='media';
+ const opposed=(bias==='alta'&&against==='baixa')||(bias==='baixa'&&against==='alta');
+ if((capConfidence||opposed)&&confidence==='alta')confidence='media';
  let invalidation:Bias['invalidation']=null;
  const inv=j.invalidation, want=bias==='alta'?'abaixo':bias==='baixa'?'acima':null;
  if(ind&&want&&inv&&LEVELS.includes(inv.level)&&inv.condition===want){
   const price=ind.levels[inv.level as Level];
   if(typeof price==='number'&&(want==='abaixo'?price<ind.close:price>ind.close))invalidation={level:inv.level,condition:want,price};
  }
- return {bias,confidence,horizonHours,drivers,invalidation,analysis:j.analysis.trim()};
+ return {bias,confidence,horizonHours,drivers,invalidation};
+}
+// Two calls per analysis: 1h (scalping, led by M5) and 4h (day trade, led by H1). Each has its own confidence cap,
+// so a strong H1 downtrend no longer forces the short-term call to agree with it.
+export function parseDualBias(text:string,ind:Indicators|null,caps:{event1h:boolean;event4h:boolean},trends:{m5?:string;h1?:string}):{short:Bias;long:Bias}|null{
+ const j=extractJson(text);
+ if(!j||typeof j.analysis!=='string'||!j.analysis.trim())return null;
+ const short=parseOne(j.short,ind,caps.event1h,1,trends.m5), long=parseOne(j.long,ind,caps.event4h,4,trends.h1);
+ if(!short||!long)return null;
+ const analysis=j.analysis.trim();
+ return {short:{...short,analysis},long:{...long,analysis}};
 }

@@ -113,7 +113,8 @@ export function MarketChart({series,levels,insight,predictions,events,plan,live}
    const day:[keyof Levels,string,string][]=[['pdh','máx ontem','#9b7fc4'],['pdl','mín ontem','#9b7fc4'],['pdc','fech ontem','#6f5a8f'],['asiaHigh','máx Ásia','#4f9aa8'],['asiaLow','mín Ásia','#4f9aa8'],['londonHigh','máx Londres','#b08a4f'],['londonLow','mín Londres','#b08a4f']];
    for(const [k,title,color] of day){const p=levels[k];if(typeof p==='number')lv(p,title,color,LineStyle.LargeDashed)}
   }
-  if(on.predictions&&insight?.invalidation)lv(insight.invalidation.price,'invalida '+insight.invalidation.condition,'#e0604f',LineStyle.Solid,2);
+  if(on.predictions&&insight?.invalidation)lv(insight.invalidation.price,'invalida 4h','#e0604f',LineStyle.Solid,2);
+  if(on.predictions&&insight?.short?.invalidation)lv(insight.short.invalidation.price,'invalida 1h','#e0604f',LineStyle.Dashed,1);
   // The buy/sell plan from the last check: entry, the session-capped SL, the TP ladder and the protection layer zone.
   if(on.plan&&plan){
    lv(plan.entry,(plan.side==='buy'?'compra':'venda')+' '+n2(plan.entry),'#e8edeb',LineStyle.Solid,1);
@@ -124,10 +125,10 @@ export function MarketChart({series,levels,insight,predictions,events,plan,live}
   // A prediction is pinned to the bar it was made on; only bars inside the window can carry a marker.
   const first=candles[0].time;
   a.priceMarks.setMarkers(on.predictions?predictions.map(p=>({p,t:slot(Date.parse(p.refTime)-300000)})).filter(({t})=>t>=first&&t<=lastOpen).sort((x,y)=>x.t-y.t).map(({p,t})=>{
-   const r=p.result&&p.result!=='unchecked'?(p.result.hit?' ✓':' ✗'):'';
-   return p.bias==='alta'?{time:sec(t),position:'belowBar' as const,shape:'arrowUp' as const,color:'#7ac5a7',text:'Alta'+r}
-    :p.bias==='baixa'?{time:sec(t),position:'aboveBar' as const,shape:'arrowDown' as const,color:'#c8867e',text:'Baixa'+r}
-    :{time:sec(t),position:'aboveBar' as const,shape:'circle' as const,color:'#d8b875',text:'Neutro'+r};
+   const r=p.result&&p.result!=='unchecked'?(p.result.hit?' ✓':' ✗'):'', h=p.horizonHours+'h ';
+   return p.bias==='alta'?{time:sec(t),position:'belowBar' as const,shape:'arrowUp' as const,color:'#7ac5a7',text:h+'Alta'+r}
+    :p.bias==='baixa'?{time:sec(t),position:'aboveBar' as const,shape:'arrowDown' as const,color:'#c8867e',text:h+'Baixa'+r}
+    :{time:sec(t),position:'aboveBar' as const,shape:'circle' as const,color:'#d8b875',text:h+'Neutro'+r};
   }):[]);
   // Only a timeframe change (or the first draw) moves the view; later updates keep the user's zoom and scroll.
   if(shownTf.current!==tf){

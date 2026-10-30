@@ -1,4 +1,8 @@
 export const FREE_MODEL = 'openrouter/free';
+// Benchmarked on the real prompt (Oct 2026): dots-3-note answered 3/3 in 21–30s; cohere north-mini-code is fast but
+// dropped or timed out 2 of 4; Gemma was rate-limited upstream every time; NVIDIA/Poolside free tiers require allowing
+// training on prompts, which data_collection:'deny' rules out. OpenRouter tries these in order, then the free router.
+export const FREE_MODELS = ['dots-studio/dots-3-note-preview:free','cohere/north-mini-code:free',FREE_MODEL];
 
 export class RouterError extends Error {
  constructor(message:string, public status=502){super(message)}
@@ -31,19 +35,23 @@ export async function checkRouterKey(key:string){
 }
 export async function generateInsight(key:string,instructions:string,context:unknown,json=false){
  const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{
-  method:'POST',signal:AbortSignal.timeout(60000),
+  method:'POST',signal:AbortSignal.timeout(90000),
   headers:{'Content-Type':'application/json',Authorization:'Bearer '+key,'X-OpenRouter-Title':'Aurum'},
-  // Free models are often reasoning models whose thinking counts against max_tokens; keep it short and leave room for the answer.
-  body:JSON.stringify({model:FREE_MODEL,max_tokens:4000,reasoning:{effort:'low',exclude:true},stream:false,...(json?{response_format:{type:'json_object'}}:{}),
+  // Free models are often reasoning models whose thinking counts against max_tokens (one spent ~2.9k of 4k thinking and
+  // ran out mid-answer). Cap the thinking where supported and leave ample room for the answer.
+  body:JSON.stringify({models:FREE_MODELS,max_tokens:8000,reasoning:{max_tokens:1500,exclude:true},stream:false,...(json?{response_format:{type:'json_object'}}:{}),
    provider:{max_price:{prompt:0,completion:0},data_collection:'deny'},
    messages:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(context)}]})
  });
  if(!r.ok)throw routerFailure(r.status);
- const j=await r.json() as {error?:{code?:number};model?:string;choices?:Array<{finish_reason?:string;message?:{content?:string}}>};
+ const j=await r.json() as {error?:{code?:number};model?:string;usage?:{completion_tokens?:number;completion_tokens_details?:{reasoning_tokens?:number}};choices?:Array<{finish_reason?:string;message?:{content?:string}}>};
  if(j.error)throw routerFailure(j.error.code||502);
  const choice=j.choices?.[0];
- if(choice?.finish_reason==='length')throw new RouterError('A resposta ficou incompleta. Nenhuma análise parcial será apresentada.');
+ const used=j.usage?.completion_tokens, thinking=j.usage?.completion_tokens_details?.reasoning_tokens;
  const text=choice?.message?.content;
+ // A cut-off reply can still hold a complete JSON object; hand it to the caller's parser and fail only if it cannot be read.
+ if(choice?.finish_reason==='length'&&typeof text==='string'&&text.includes('{')&&text.includes('}'))return {text,model:j.model||FREE_MODEL,provider:'OpenRouter',truncated:true};
+ if(choice?.finish_reason==='length')throw new RouterError('A resposta ficou incompleta. Nenhuma análise parcial será apresentada.'+(used?` (${j.model||'modelo'}: ${used} tokens, ${thinking??'?'} de raciocínio)`:''));
  if(typeof text!=='string'||!text.trim())throw new RouterError('O modelo não retornou uma análise. Tente novamente mais tarde.');
- return {text,model:j.model||FREE_MODEL,provider:'OpenRouter'};
+ return {text,model:j.model||FREE_MODEL,provider:'OpenRouter',truncated:false};
 }

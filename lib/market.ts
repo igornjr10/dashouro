@@ -1,5 +1,5 @@
 import {checkRouterKey,generateInsight,requestKey,RouterError,FREE_MODEL} from './openrouter';
-import {indicators,intraday,intradayLevels,parseBias,type Candle,type Indicators,type Intraday} from './indicators';
+import {indicators,intraday,intradayLevels,parseDualBias,type Candle,type Indicators,type Intraday} from './indicators';
 import {checkTrade} from './trade-check';
 import {authorized,history,saveCheck,savePrediction,saveSignal,scoreSignals,signalHistory,storeEnabled,type StoreEnv} from './store';
 import {parseSignal,ruleCheck} from './signals';
@@ -95,12 +95,16 @@ export async function getCalendar() {
  calendarCache={at:Date.now(),data};
  return data;
 }
-const PROMPT=`Você é analista de contexto do ouro (XAU/USD) para Igor. Responda SOMENTE com um objeto JSON válido, sem nenhum texto fora dele, no formato {"bias":"alta"|"baixa"|"neutro","confidence":"baixa"|"media"|"alta","horizonHours":1-4,"drivers":[{"text":"motivo curto","source":"fonte e data"}],"invalidation":{"level":"<uma chave de candlesM5.indicators.levels>","condition":"acima"|"abaixo"}|null,"analysis":"texto"}.
-bias é o viés de direção mais provável do preço nas próximas horizonHours horas (1 a 4), não um sinal de entrada. Baseie-o principalmente em candlesM5.indicators (trend, rsi14, ema20Slope1h, change1h, change4h, atr14, levels) e em candlesM5.sentiment (resumo técnico M5 e H1 por votos de médias e osciladores, e pressão compradora/vendedora dos últimos 24 candles M5) e em candlesM5.intraday: h1 (tendência H1, que tem peso maior que o M5), previousDay (máxima, mínima e fechamento do dia anterior), today e sessions (faixas de Ásia, Londres e Nova York de hoje). Diga onde o preço está em relação a esses níveis do dia. COT é semanal de futuros e notícias são só manchetes: use-os como contexto secundário.
-Calibração: se os sinais técnicos conflitarem ou candlesM5.indicators for null, use "neutro" com confiança "baixa". Se a tendência H1 contrariar o viés, a confiança máxima é "media". Só use confiança "alta" quando trend, h1.trend, ema20Slope1h, change1h e change4h apontarem para o mesmo lado e o rsi14 estiver entre 25 e 75. Se highImpactUsdWithin4h for true, a confiança máxima é "media" e o evento deve aparecer nos drivers.
-drivers: até 3, do mais forte para o mais fraco, cada um com fonte e data. invalidation: para alta, condition "abaixo" e um nível abaixo do preço; para baixa, "acima" e um nível acima; para neutro, null. Informe só a chave do nível, nunca um preço.
-analysis: português, até 250 palavras, quatro parágrafos curtos separados por linha em branco: Contexto, Evidências, Cenários condicionais e Lacunas. Cite fonte e data em cada conclusão factual. Use apenas números presentes nos dados anexados; não invente preços, eventos, consenso, probabilidades, fluxo, suportes ou resistências. A agenda econômica vem de agregador não oficial: use-a só para alertar eventos USD próximos. Não recomende compra, venda, entrada, stop ou alvo, e diga que o timing de entrada não é avaliado sem agenda econômica oficial. A cotação spot não é preço executável. Não alegue acesso visual ao TradingView. Termine lembrando de validar spread e condições na corretora.`;
-const CHECK_PROMPT=`Você explica para Igor a avaliação de uma operação em XAU/USD que ele está considerando (check.side: buy = compra, sell = venda). O veredito em check.verdict foi calculado por regras fixas e NÃO pode ser alterado nem contestado: favoravel, ressalvas, desfavoravel ou nao-operar. Responda SOMENTE com JSON válido: {"summary":"uma frase em português explicando o veredito","pros":["até 3 pontos a favor"],"cons":["até 3 pontos contra ou riscos"],"context":"até 80 palavras sobre notícias, Fed e COT que reforçam ou enfraquecem a operação, citando fonte e data"}.
+const CALL=`{"bias":"alta"|"baixa"|"neutro","confidence":"baixa"|"media"|"alta","drivers":[{"text":"motivo curto","source":"fonte e data"}],"invalidation":{"level":"<uma chave de candlesM5.indicators.levels>","condition":"acima"|"abaixo"}|null}`;
+const PROMPT=`Escreva TODO o texto (analysis e drivers) em português do Brasil, nunca em inglês. Você é analista de contexto do ouro (XAU/USD) para Igor, que opera scalping e day trade. Responda SOMENTE com um objeto JSON válido, sem nenhum texto fora dele, no formato {"short":${CALL},"long":${CALL},"analysis":"texto"}.
+São duas leituras independentes do viés de direção mais provável, nenhuma é sinal de entrada:
+- short = próxima 1 hora (scalping). Baseie-o principalmente no curto prazo: candlesM5.indicators (trend, rsi14, ema20Slope1h, change1h, atr14), candlesM5.sentiment.m5 e candlesM5.sentiment.pressure (últimos 24 candles M5), e a distância até os níveis mais próximos. Um repique ou uma correção contra a tendência H1 deve aparecer aqui quando o M5 e o momento de 1h mostrarem isso; não copie a tendência do H1.
+- long = próximas 4 horas (day trade). Baseie-o principalmente em candlesM5.intraday.h1, candlesM5.sentiment.h1, change4h, previousDay, today e sessions (faixas de Ásia, Londres e Nova York de hoje).
+Os dois podem discordar, e isso é informação útil: diga na análise quando discordam e por quê.
+Calibração de cada um: se os sinais do seu prazo conflitarem ou candlesM5.indicators for null, use "neutro" com confiança "baixa". short só tem confiança "alta" quando trend, ema20Slope1h, change1h, sentiment.m5 e pressure apontarem para o mesmo lado e o rsi14 estiver entre 25 e 75; contra a tendência M5 a confiança máxima é "media". long só tem confiança "alta" quando h1.trend, sentiment.h1, change4h e trend concordarem; contra a tendência H1 a confiança máxima é "media". Se highImpactUsdWithin1h for true, o short tem confiança máxima "media"; se highImpactUsdWithin4h for true, o long também, e o evento deve aparecer nos drivers.
+drivers: até 3 por leitura, do mais forte para o mais fraco, cada um com fonte e data. invalidation: para alta, condition "abaixo" e um nível abaixo do preço; para baixa, "acima" e um nível acima; para neutro, null. Informe só a chave do nível, nunca um preço; para o short prefira níveis próximos (high2h, low2h, ema20).
+analysis: português, até 160 palavras, quatro parágrafos curtos separados por linha em branco: Contexto, Evidências (1h e 4h), Cenários condicionais e Lacunas. Cada driver com no máximo 15 palavras. Diga onde o preço está em relação aos níveis do dia. COT é semanal de futuros e notícias são só manchetes: contexto secundário. Cite fonte e data em cada conclusão factual. Use apenas números presentes nos dados anexados; não invente preços, eventos, consenso, probabilidades, fluxo, suportes ou resistências. A agenda econômica vem de agregador não oficial: use-a só para alertar eventos USD próximos. Não recomende compra, venda, entrada, stop ou alvo. A cotação spot não é preço executável. Não alegue acesso visual ao TradingView. Termine lembrando de validar spread e condições na corretora.`;
+const CHECK_PROMPT=`Escreva TODO o texto em português do Brasil, nunca em inglês. Você explica para Igor a avaliação de uma operação em XAU/USD que ele está considerando (check.side: buy = compra, sell = venda). O veredito em check.verdict foi calculado por regras fixas e NÃO pode ser alterado nem contestado: favoravel, ressalvas, desfavoravel ou nao-operar. Responda SOMENTE com JSON válido: {"summary":"uma frase em português explicando o veredito","pros":["até 3 pontos a favor"],"cons":["até 3 pontos contra ou riscos"],"context":"até 80 palavras sobre notícias, Fed e COT que reforçam ou enfraquecem a operação, citando fonte e data"}.
 Use só números presentes nos dados. Não invente preços, alvos, probabilidades ou eventos. Não diga para comprar nem vender: descreva os fatores e deixe a decisão com ele. Notícias são só manchetes; COT é semanal; a agenda é de agregador não oficial. Se check.eventWarning existir, ele deve aparecer em cons.
 Igor opera scalping e day trade com regras próprias, já aplicadas em check.plan: 1 pip = 0,10 USD; SL máximo de 30 pips na Ásia e em Londres e 50 em Nova York; TP1 20, TP2 40–50 e TP3 80+ pips; camada de proteção com mesmo lote e mesmo SL quando a operação está 10–20 pips contra; no TP1 o SL vai para o ponto de equilíbrio. Fale em pips, use os preços de check.plan e aponte em cons se o stop técnico não coube no limite da sessão, se há um nível antes do TP1, ou se o prejuízo com a camada (check.plan.layer.lossAtSlPips) for alto.`;
 function parseExplanation(text:string){
@@ -157,7 +161,27 @@ function telegramReply(r:Awaited<ReturnType<typeof processSignal>>){
 }
 // ttl>0 lets the Vercel CDN share a successful response across visitors; errors are never cached.
 const response=(data:unknown,status=200,ttl=0)=>Response.json(data,{status,headers:{'Cache-Control':ttl>0&&status===200?`public, max-age=0, s-maxage=${ttl}`:'private, no-store'}});
+// Edge functions must start responding within ~25s, but free models can take 30–60s. Slow AI routes answer at once with a
+// stream that sends a space every 5s and then the JSON (leading whitespace is valid JSON). The real status goes in the body
+// as `status` and errors keep their `error` field, so clients check `error` rather than the HTTP code.
+const SLOW=new Set(['/api/insight','/api/check']);
+function heartbeat(work:()=>Promise<Response>):Response{
+ const enc=new TextEncoder();
+ const body=new ReadableStream<Uint8Array>({async start(ctrl){
+  const tick=setInterval(()=>ctrl.enqueue(enc.encode(' ')),5000);
+  try{const r=await work();const j=await r.json() as Record<string,unknown>;ctrl.enqueue(enc.encode(JSON.stringify({...j,status:r.status})))}
+  catch{ctrl.enqueue(enc.encode(JSON.stringify({error:'Falha inesperada ao gerar a análise.',status:500})))}
+  finally{clearInterval(tick);ctrl.close()}
+ }});
+ return new Response(body,{headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'private, no-store'}});
+}
 export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response>{
+ const p=new URL(request.url).pathname;
+ // Cheap rejections (method, origin) stay synchronous so they keep their real HTTP status.
+ if(SLOW.has(p)&&request.method==='POST'&&request.headers.get('origin')===new URL(request.url).origin)return heartbeat(()=>route(request,env));
+ return route(request,env);
+}
+async function route(request:Request,env:RuntimeEnv):Promise<Response>{
  const path=new URL(request.url).pathname;
  if(path==='/api/config'&&request.method==='GET') return response({aiConfigured:!!env.OPENROUTER_API_KEY,provider:'OpenRouter',model:FREE_MODEL,candlesConfigured:!!env.TWELVEDATA_API_KEY,dbConfigured:storeEnabled(env)});
  if(path==='/api/history'){
@@ -233,18 +257,21 @@ export async function marketApi(request:Request,env:RuntimeEnv):Promise<Response
   if((quote.data as {stale:boolean}).stale)return response({error:'Cotação desatualizada. Aguarde dados atuais para analisar.'},503);
   const c=candles.ok?candles.data as {candles:Candle[];indicators:Indicators;intraday:Intraday|null;sentiment:Sentiment;updatedAt:string;stale:boolean;source:string}:null;
   const ind=c&&!c.stale?c.indicators:null;
-  const at=new Date().toISOString(), horizonEnd=Date.now()+4*3600000;
-  const eventSoon=calendar.ok&&(calendar.data as {events:{impact:string;date:string}[]}).events.some(e=>e.impact==='High'&&Date.parse(e.date)>Date.now()&&Date.parse(e.date)<horizonEnd);
+  const at=new Date().toISOString(), events=calendar.ok?(calendar.data as {events:{impact:string;date:string}[]}).events:[];
+  const highWithin=(ms:number)=>events.some(e=>e.impact==='High'&&Date.parse(e.date)>Date.now()&&Date.parse(e.date)<Date.now()+ms);
+  const event1h=highWithin(3600000), eventSoon=highWithin(4*3600000);
   // The model gets computed indicators plus the last 2h of bars, not the full window: fewer tokens, faster free-model replies.
   const candlesM5=c?{indicators:ind,intraday:ind?c.intraday:null,sentiment:ind?summarize(c.sentiment):null,recent:c.candles.slice(-24),updatedAt:c.updatedAt,stale:c.stale,source:c.source}:candles;
-  const context={at,quote,cot,news,fed,candlesM5,calendar,highImpactUsdWithin4h:eventSoon};
+  const context={at,quote,cot,news,fed,candlesM5,calendar,highImpactUsdWithin1h:event1h,highImpactUsdWithin4h:eventSoon};
   try{
    const result=await generateInsight(key,PROMPT,context,true);
-   const bias=parseBias(result.text,ind,eventSoon,ind?c?.intraday?.h1?.trend:undefined);
-   if(!bias)return response({error:'O modelo não devolveu a previsão no formato exigido. Nada foi apresentado; tente novamente.'},502);
+   const dual=parseDualBias(result.text,ind,{event1h,event4h:eventSoon},{m5:ind?.trend,h1:ind?c?.intraday?.h1?.trend:undefined});
+   if(!dual)return response({error:result.truncated?'A resposta ficou incompleta. Nenhuma análise parcial será apresentada; tente novamente.':'O modelo não devolveu as duas previsões no formato exigido. Nada foi apresentado; tente novamente.'},502);
    const reference=ind&&c?{price:ind.close,time:c.updatedAt,source:'Twelve Data · fechamento M5'}:null;
-   const saved=reference?await persist(env,request,()=>savePrediction(env,bias,reference,result.model)):false;
-   return response({...bias,model:result.model,provider:result.provider,at,reference,eventSoon,indicators:ind,saved});
+   // Each horizon is stored and scored on its own, so the scoreboard can compare the 1h and 4h hit rates.
+   const saved=reference?await persist(env,request,()=>Promise.all([savePrediction(env,dual.short,reference,result.model),savePrediction(env,dual.long,reference,result.model)])):false;
+   // Top-level fields keep the 4h call so the chart, alerts and older clients work unchanged; `short` carries the 1h call.
+   return response({...dual.long,short:dual.short,model:result.model,provider:result.provider,at,reference,eventSoon,event1h,indicators:ind,saved});
   }catch(e){return response({error:e instanceof RouterError?e.message:'A conexão com OpenRouter falhou ou excedeu o tempo. Tente mais tarde.'},e instanceof RouterError?e.status:502)}
  }
  const fns:Record<string,()=>Promise<unknown>>={'/api/quote':getQuote,'/api/cot':getCot,'/api/news':()=>getNews('news'),'/api/fed':()=>getNews('fed'),'/api/candles':()=>getCandles(env),'/api/calendar':getCalendar};

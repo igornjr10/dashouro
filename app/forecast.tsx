@@ -4,10 +4,14 @@ import type {SignalHistory} from './signals';
 import {AlertTriangle,ArrowDownRight,ArrowUpRight,Minus,Target,Trash2} from 'lucide-react';
 
 export type Level='high2h'|'low2h'|'highWindow'|'lowWindow'|'ema20'|'ema50'|'pdh'|'pdl'|'pdc'|'asiaHigh'|'asiaLow'|'londonHigh'|'londonLow';
-export type Insight={
+type Call={
  bias:'alta'|'baixa'|'neutro'; confidence:'baixa'|'media'|'alta'; horizonHours:number;
  drivers:{text:string;source:string}[];
  invalidation:{level:Level;condition:'acima'|'abaixo';price:number}|null;
+};
+// Top-level fields are the 4h call; `short` is the 1h call (absent in answers from before the split).
+export type Insight=Call&{
+ short?:Call; event1h?:boolean;
  analysis:string; model:string; at:string; eventSoon:boolean;
  reference:{price:number;time:string;source:string}|null;
 };
@@ -38,7 +42,7 @@ const store=(list:Prediction[])=>{try{localStorage.setItem(KEY,JSON.stringify(li
 
 type Rate={total:number;hits:number};
 export type CheckRow={id:string;created_at:string;side:'buy'|'sell';verdict:string;passed:number;total:number;price:number;stop_price:number;target_price:number|null;rr:number|null;block:string|null};
-type Remote={list:Prediction[];checks:CheckRow[];signals:SignalHistory|null;stats:{overall:Rate;byBias:Record<string,Rate>;byConfidence:Record<string,Rate>}};
+type Remote={list:Prediction[];checks:CheckRow[];signals:SignalHistory|null;stats:{overall:Rate;byBias:Record<string,Rate>;byConfidence:Record<string,Rate>;byHorizon?:Record<string,Rate>}};
 type ServerRow={created_at:string;bias:Prediction['bias'];confidence:Prediction['confidence'];horizon_hours:number;ref_price:number;ref_time:string;model:string|null;status:string;result_price:number|null;result_move:number|null;hit:boolean|null};
 const fromServer=(r:ServerRow):Prediction=>({at:r.created_at,bias:r.bias,confidence:r.confidence,horizonHours:r.horizon_hours,refPrice:Number(r.ref_price),refTime:r.ref_time,model:r.model||'',
  result:r.status==='pending'?undefined:r.status==='unchecked'?'unchecked':{price:Number(r.result_price),move:Number(r.result_move),hit:!!r.hit}});
@@ -61,28 +65,41 @@ export function usePredictions(candles:Candle[]|null,access=''){
  const local=useMemo(()=>saved.map(p=>p.result?p:{...p,result:score(p,candles)}),[saved,candles]);
  // Persist results as soon as they are scored, because the M5 window only covers the last ~8h.
  useEffect(()=>{if(local.some((p,i)=>p.result&&!saved[i].result))store(local)},[local,saved]);
- const add=useCallback((i:Insight&{saved?:boolean})=>{if(!i.reference)return;if(i.saved){sync();return}const p:Prediction={at:i.at,bias:i.bias,confidence:i.confidence,horizonHours:i.horizonHours,refPrice:i.reference.price,refTime:i.reference.time,model:i.model};setSaved(s=>{const n=[p,...(load()??s)].slice(0,50);store(n);return n})},[sync]);
+ const add=useCallback((i:Insight&{saved?:boolean})=>{
+  if(!i.reference)return;if(i.saved){sync();return}
+  const ref=i.reference, mk=(c:Call):Prediction=>({at:i.at,bias:c.bias,confidence:c.confidence,horizonHours:c.horizonHours,refPrice:ref.price,refTime:ref.time,model:i.model});
+  const fresh=i.short?[mk(i.short),mk(i)]:[mk(i)];
+  setSaved(s=>{const n=[...fresh,...(load()??s)].slice(0,50);store(n);return n});
+ },[sync]);
  const clear=useCallback(()=>{store([]);setSaved([])},[]);
  return {list:remote?remote.list:local,remote,syncError,sync,add,clear};
 }
 
 const BiasIcon=({bias,size=22}:{bias:Insight['bias'];size?:number})=>bias==='alta'?<ArrowUpRight size={size}/>:bias==='baixa'?<ArrowDownRight size={size}/>:<Minus size={size}/>;
 
-export function Forecast({insight}:{insight:Insight}){
- const inv=insight.invalidation;
- return <div className="forecast">
-  <div className={'bias-card bias-'+insight.bias}>
-   <div className="bias-main"><BiasIcon bias={insight.bias} size={30}/><div><small>VIÉS DE DIREÇÃO · PRÓXIMAS {insight.horizonHours}H</small><strong>{biasNames[insight.bias]}</strong></div></div>
-   <div className="bias-facts">
-    <div><small>Confiança</small><strong>{confNames[insight.confidence]}</strong></div>
-    <div><small>Preço de referência</small><strong>{insight.reference?num(insight.reference.price):'—'}</strong></div>
-    <div><small>Invalida se</small><strong>{inv?`fechar ${inv.condition} de ${num(inv.price)}`:'—'}</strong>{inv&&<em>{levelNames[inv.level]}</em>}</div>
-   </div>
+function CallCard({c,title,event}:{c:Call;title:string;event:boolean}){
+ const inv=c.invalidation;
+ return <div className={'bias-card bias-'+c.bias}>
+  <div className="bias-main"><BiasIcon bias={c.bias} size={30}/><div><small>{title}</small><strong>{biasNames[c.bias]}</strong></div></div>
+  <div className="bias-facts">
+   <div><small>Confiança</small><strong>{confNames[c.confidence]}</strong></div>
+   <div><small>Invalida se</small><strong>{inv?`fechar ${inv.condition} de ${num(inv.price)}`:'—'}</strong>{inv&&<em>{levelNames[inv.level]}</em>}</div>
   </div>
-  {insight.eventSoon&&<div className="bias-warning"><AlertTriangle size={14}/>Evento USD de alto impacto nas próximas 4h. Confiança limitada a média.</div>}
-  {insight.drivers.length>0&&<ol className="bias-drivers">{insight.drivers.map((d,i)=><li key={i}>{d.text}<small>{d.source}</small></li>)}</ol>}
+  {event&&<div className="bias-warning"><AlertTriangle size={14}/>Evento USD de alto impacto neste prazo: confiança limitada a média.</div>}
+  {c.drivers.length>0&&<ol className="bias-drivers">{c.drivers.map((d,i)=><li key={i}>{d.text}<small>{d.source}</small></li>)}</ol>}
+ </div>;
+}
+
+export function Forecast({insight}:{insight:Insight}){
+ const s=insight.short, split=s&&s.bias!==insight.bias;
+ return <div className="forecast">
+  <div className="bias-pair">
+   {s&&<CallCard c={s} title="SCALPING · PRÓXIMA 1H (M5)" event={!!insight.event1h}/>}
+   <CallCard c={insight} title={`DAY TRADE · PRÓXIMAS ${insight.horizonHours}H (H1)`} event={insight.eventSoon}/>
+  </div>
+  {split&&<div className="bias-split">Os prazos discordam: {biasNames[s.bias].toLowerCase()} na próxima hora contra {biasNames[insight.bias].toLowerCase()} nas próximas 4h. Movimento contra a tendência maior costuma ser mais curto.</div>}
   <p className="analysis-text" aria-live="polite">{insight.analysis}</p>
-  <div className="panel-note">Viés probabilístico, não sinal de entrada. Indicadores calculados no servidor; níveis vêm dos candles da Twelve Data, não do modelo. {insight.reference?`Referência: ${insight.reference.source}, ${time(insight.reference.time)}.`:'Sem candles M5 atuais: viés forçado a neutro.'}</div>
+  <div className="panel-note">Viés probabilístico, não sinal de entrada. Indicadores calculados no servidor; níveis vêm dos candles da Twelve Data, não do modelo. {insight.reference?`Preço de referência ${num(insight.reference.price)} (${insight.reference.source}, ${time(insight.reference.time)}).`:'Sem candles M5 atuais: viés forçado a neutro.'}</div>
  </div>;
 }
 
@@ -109,7 +126,7 @@ export function Scoreboard({predictions,clear,dbConfigured,access,setAccess}:{pr
     <div><small>Acertos</small><strong>{total.total?`${total.hits} de ${total.total}`:'—'}</strong></div>
     <div><small>Taxa</small><strong>{total.total?`${Math.round(total.hits/total.total*100)}%`:'—'}</strong></div>
     <div><small>Aguardando</small><strong>{pending}</strong></div>
-    {remote&&<><div><small>Confiança alta</small><strong>{pct(remote.stats.byConfidence.alta)}</strong></div><div><small>Confiança média</small><strong>{pct(remote.stats.byConfidence.media)}</strong></div><div><small>Confiança baixa</small><strong>{pct(remote.stats.byConfidence.baixa)}</strong></div></>}
+    {remote&&<><div><small>1h (scalping)</small><strong>{pct(remote.stats.byHorizon?.['1'])}</strong></div><div><small>4h (day trade)</small><strong>{pct(remote.stats.byHorizon?.['4'])}</strong></div><div><small>Confiança alta</small><strong>{pct(remote.stats.byConfidence.alta)}</strong></div><div><small>Confiança média</small><strong>{pct(remote.stats.byConfidence.media)}</strong></div><div><small>Confiança baixa</small><strong>{pct(remote.stats.byConfidence.baixa)}</strong></div></>}
    </div>
    <div className="score-list">{list.slice(0,8).map((p,i)=><div key={i} className="score-row">
     <span className={'bias-chip bias-'+p.bias}><BiasIcon bias={p.bias} size={13}/>{biasNames[p.bias]}</span>

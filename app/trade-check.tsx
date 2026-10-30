@@ -30,7 +30,7 @@ export function useTradeCheck(getHeaders:()=>Record<string,string>,onSaved:()=>v
  const [result,setResult]=useState<Result|null>(null),[busy,setBusy]=useState<Side|null>(null),[error,setError]=useState('');
  const run=async(side:Side)=>{
   setBusy(side);setError('');setResult(null);
-  try{const r=await fetch('/api/check?side='+side,{method:'POST',headers:getHeaders()});const j=await r.json() as Result&{error?:string;saved?:boolean};if(!r.ok)throw new Error(j.error);setResult(j);if(j.saved)onSaved()}
+  try{const r=await fetch('/api/check?side='+side,{method:'POST',headers:getHeaders()});const j=await r.json() as Result&{error?:string;saved?:boolean};if(!r.ok||j.error)throw new Error(j.error);setResult(j);if(j.saved)onSaved()}
   catch(e){setError(e instanceof Error?e.message:'Falha ao avaliar a operação.')}
   finally{setBusy(null)}
  };

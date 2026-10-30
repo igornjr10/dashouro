@@ -28,7 +28,8 @@ export function useAlerts({price,levels,insight,events,now}:{price:number|null;l
   if(!enabled||price===null||!levels){prev.current=price;return}
   const p0=prev.current; prev.current=price; if(p0===null||p0===price)return;
   const lines:[string,string,number][]=WATCH.flatMap(k=>typeof levels[k]==='number'?[[k,levelNames[k],levels[k]!] as [string,string,number]]:[]);
-  if(insight?.invalidation)lines.push(['invalidation','invalidação da previsão ('+levelNames[insight.invalidation.level]+')',insight.invalidation.price]);
+  if(insight?.invalidation)lines.push(['invalidation','invalidação da previsão de 4h ('+levelNames[insight.invalidation.level]+')',insight.invalidation.price]);
+  if(insight?.short?.invalidation)lines.push(['invalidation1h','invalidação da previsão de 1h ('+levelNames[insight.short.invalidation.level]+')',insight.short.invalidation.price]);
   for(const [k,name,l] of lines){
    const up=p0<l&&price>=l, down=p0>l&&price<=l;
    if(up||down)push(`${k}:${l}:${up?'up':'down'}`,`XAU/USD ${up?'rompeu acima':'rompeu abaixo'} da ${name}`,`Nível ${num(l)} · preço ${num(price)} (Gold API spot)`);

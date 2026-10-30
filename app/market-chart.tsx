@@ -113,7 +113,8 @@ export function MarketChart({series,levels,insight,predictions,events,plan,live}
    const day:[keyof Levels,string,string][]=[['pdh','máx ontem','#9b7fc4'],['pdl','mín ontem','#9b7fc4'],['pdc','fech ontem','#6f5a8f'],['asiaHigh','máx Ásia','#4f9aa8'],['asiaLow','mín Ásia','#4f9aa8'],['londonHigh','máx Londres','#b08a4f'],['londonLow','mín Londres','#b08a4f']];
    for(const [k,title,color] of day){const p=levels[k];if(typeof p==='number')lv(p,title,color,LineStyle.LargeDashed)}
   }
-  if(on.predictions&&insight?.invalidation)lv(insight.invalidation.price,'invalida '+insight.invalidation.condition,'#e0604f',LineStyle.Solid,2);
+  if(on.predictions&&insight?.invalidation)lv(insight.invalidation.price,'invalida 4h','#e0604f',LineStyle.Solid,2);
+  if(on.predictions&&insight?.short?.invalidation)lv(insight.short.invalidation.price,'invalida 1h','#e0604f',LineStyle.Dashed,1);
   // The buy/sell plan from the last check: entry, the session-capped SL, the TP ladder and the protection layer zone.
   if(on.plan&&plan){
    lv(plan.entry,(plan.side==='buy'?'compra':'venda')+' '+n2(plan.entry),'#e8edeb',LineStyle.Solid,1);

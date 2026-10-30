@@ -33,11 +33,11 @@
   --section-y:clamp(72px,11vw,160px);
   --step--1:clamp(.84rem,.82rem + .1vw,.9rem);
   --step-0:clamp(1rem,.96rem + .2vw,1.125rem);
-  --step-1:clamp(1.2rem,1.1rem + .5vw,1.5rem);
-  --step-2:clamp(1.5rem,1.25rem + 1.1vw,2.25rem);
-  --step-3:clamp(2rem,1.5rem + 2.2vw,3.5rem);
-  --step-4:clamp(2.6rem,1.7rem + 4vw,5.25rem);
-  --step-5:clamp(2.9rem,1.7rem + 5.4vw,6.6rem);
+  --step-1:clamp(1.08rem,1.03rem + .25vw,1.25rem);
+  --step-2:clamp(1.3rem,1.18rem + .6vw,1.75rem);
+  --step-3:clamp(1.55rem,1.3rem + 1.2vw,2.4rem);
+  --step-4:clamp(1.95rem,1.5rem + 2.2vw,3.4rem);
+  --step-5:clamp(2.3rem,1.6rem + 3.4vw,4.4rem);
   --ease:cubic-bezier(.16,1,.3,1);
   --shadow:0 30px 80px -20px rgba(0,0,0,.6);
   --glow:0 0 0 1px rgba(255,255,255,.06), 0 20px 60px -10px color-mix(in srgb,var(--accent) 45%,transparent);
@@ -276,7 +276,7 @@ canvas.bg{width:100%;height:100%}
     <div class="hero__copy stack" style="--gap:1.6rem">
       <span class="badge" data-hero-item><i></i>XAU/USD · lista de espera aberta</span>
       <h1 data-split>Seu trade no ouro passa por <span class="text-grad">6 regras</span> antes do clique.</h1>
-      <p class="lead" data-hero-item>O Aurum junta preço spot, candles M5 e H1, COT, Fed, notícias e o calendário do dólar num painel só. O veredito de compra ou venda sai de regras fixas. A IA explica o porquê, mas não muda a decisão.</p>
+      <p class="lead" data-hero-item>Preço spot, candles M5 e H1, COT, Fed e calendário do dólar num painel só. Regras fixas dão o veredito. A IA só explica.</p>
       <div class="row" data-hero-item>
         <a class="btn btn--primary btn--lg" href="#cadastro" data-magnetic>Entrar na lista de espera
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
@@ -305,33 +305,33 @@ canvas.bg{width:100%;height:100%}
 <section class="section">
   <div class="container">
     <p class="eyebrow" style="margin-bottom:1.4rem">O problema</p>
-    <p data-scrub-text style="font-family:var(--font-display);font-size:var(--step-3);line-height:1.15;font-weight:600;max-width:26ch">O sinal chega sem contexto. O ouro anda 20 pips em minutos, o payroll sai no meio do trade e o stop que veio no sinal não cabe na sua sessão. O Aurum confere tudo isso antes de você clicar, não depois.</p>
+    <p data-scrub-text style="font-family:var(--font-display);font-size:var(--step-3);line-height:1.15;font-weight:600;max-width:28ch">O sinal chega sem contexto. O payroll sai no meio do trade e o stop do sinal não cabe na sua sessão. O Aurum confere isso antes do clique.</p>
   </div>
 </section>
 
 <!-- S04 MÉTODO (cartas empilhando) -->
 <section class="section" id="metodo" style="padding-top:0">
   <div class="container">
-    <div class="stack" style="margin-bottom:6vh"><p class="eyebrow">Como funciona</p><h2 data-split>Quatro passos, nessa ordem.</h2><p class="lead" data-reveal>Primeiro o mercado, depois a leitura, depois a sua entrada. O dinheiro só entra na conta no fim, e quem decide é você.</p></div>
+    <div class="stack" style="margin-bottom:6vh"><p class="eyebrow">Como funciona</p><h2 data-split>Quatro passos, nessa ordem.</h2><p class="lead" data-reveal>Primeiro o mercado, depois a leitura, depois a sua entrada. Quem decide é você.</p></div>
     <div class="stack-cards">
       <article class="stack-card card card--glass" style="min-height:46vh">
         <div><span class="step-n">01 / LÊ O MERCADO</span><h3>Preço, candles e níveis do dia</h3>
-        <p class="muted">Spot do ouro a cada 30 segundos, candles de 5 minutos e de 1 hora, máxima, mínima e fechamento de ontem, e as faixas das sessões Ásia, Londres e Nova York.</p></div>
+        <p class="muted">Spot a cada 30 s, candles M5 e H1, níveis de ontem e as faixas de Ásia, Londres e Nova York.</p></div>
         <div class="tags"><span class="tag">EMA</span><span class="tag">RSI</span><span class="tag">ATR</span><span class="tag">Momentum</span><span class="tag">Tendência H1</span></div>
       </article>
       <article class="stack-card card card--glass" style="min-height:46vh">
         <div><span class="step-n">02 / DÁ UM VIÉS</span><h3>Alta, baixa ou neutro, para 1 a 4 horas</h3>
-        <p class="muted">Com nível de confiança, os motivos e o preço que invalida a leitura. Se um evento forte do dólar sai nas próximas 4 horas, ou o H1 aponta para o outro lado, a confiança é rebaixada automaticamente.</p></div>
+        <p class="muted">Com confiança, motivos e o preço que invalida a leitura. Evento forte do dólar ou H1 contra rebaixam a confiança.</p></div>
         <div class="tags"><span class="tag">Confiança limitada</span><span class="tag">Invalidação em preço</span></div>
       </article>
       <article class="stack-card card card--glass" style="min-height:46vh">
         <div><span class="step-n">03 / CONFERE SUA ENTRADA</span><h3>Você toca em Avaliar compra ou Avaliar venda</h3>
-        <p class="muted">Seis regras fixas dão o veredito: favorável, com ressalvas, desfavorável ou não operar. Candle velho ou notícia de alto impacto em 30 minutos travam a entrada. A IA lista prós e contras, sem poder mudar o resultado.</p></div>
+        <p class="muted">Seis regras fixas dão o veredito. Candle velho ou notícia forte em 30 min travam a entrada. A IA não muda o resultado.</p></div>
         <div class="tags"><span class="tag">Favorável</span><span class="tag">Ressalvas</span><span class="tag">Desfavorável</span><span class="tag">Não operar</span></div>
       </article>
       <article class="stack-card card card--glass" style="min-height:46vh">
         <div><span class="step-n">04 / CALCULA STOP E ALVOS</span><h3>Stop técnico que cabe na sessão</h3>
-        <p class="muted">Stop além do nível de proteção mais próximo, dentro do limite da sessão: 30 pips em Ásia e Londres, 50 em Nova York. Alvos em 20, 40 a 50 e 80 pips, com camada de proteção, preço médio e o prejuízo total se as duas pararem no stop.</p></div>
+        <p class="muted">Até 30 pips em Ásia e Londres, 50 em Nova York. Camada de proteção com preço médio e prejuízo total já calculados.</p></div>
         <div class="tags"><span class="tag">TP1 20</span><span class="tag">TP2 40–50</span><span class="tag">TP3 80</span><span class="tag">Camada de proteção</span></div>
       </article>
     </div>
@@ -345,7 +345,7 @@ canvas.bg{width:100%;height:100%}
     <div class="stack">
       <p class="eyebrow">O veredito</p>
       <h2 data-split>Regra decide. IA explica.</h2>
-      <p class="lead" data-reveal>A maioria das ferramentas deixa o modelo de IA dizer "compra". No Aurum, o veredito vem de regras calculadas no servidor. O modelo só escreve o contexto: o que pesa a favor, o que pesa contra, o que o COT e as notícias dizem.</p>
+      <p class="lead" data-reveal>O veredito vem de regras calculadas no servidor. A IA só escreve o contexto: prós, contras, COT e notícias.</p>
       <ul class="checklist" data-stagger>
         <li>Tendência do M5 e do H1 a favor do lado escolhido</li>
         <li>Momentum de 1 hora e RSI sem esticar</li>
@@ -404,8 +404,8 @@ canvas.bg{width:100%;height:100%}
     <div class="stack">
       <p class="eyebrow">Sinais de grupo</p>
       <h2 data-split>Cole o sinal. Veja se ele passa nas suas regras.</h2>
-      <p class="lead" data-reveal>Encaminhe pelo Telegram ou cole o texto. O Aurum lê o sinal, confere o stop, a distância do primeiro alvo e a entrada contra o último candle, e devolve um stop ajustado à sua sessão quando o do sinal é largo demais.</p>
-      <p class="muted" data-reveal>Depois ele acompanha o trade pelos candles e pontua duas vezes: com o stop do sinal e com o stop das suas regras. Em algumas semanas, você sabe se o grupo vale a pena.</p>
+      <p class="lead" data-reveal>Encaminhe pelo Telegram ou cole o texto. O Aurum confere stop, alvo e entrada, e ajusta o stop à sua sessão.</p>
+      <p class="muted" data-reveal>Depois pontua o resultado com o stop do sinal e com o seu. Em semanas, você sabe se o grupo vale a pena.</p>
     </div>
     <div class="stack" style="--gap:.6rem" data-reveal="left">
       <div class="paste" aria-label="Exemplo de sinal colado">Gold buy 4019

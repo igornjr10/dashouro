@@ -29,11 +29,13 @@ export type CrtSetup={
  side:'buy'|'sell'|null;
  status:'b-formando'|'sem-setup'|'aguardando-quebra'|'entrada'|'descartado'|'expirado';
  detail:string;
- entry?:{time:number;price:number;sl:number;slPips:number;tps:{name:string;price:number}[];target:number;layer:{from:number;to:number}|null};
+ entry?:{time:number;price:number;sl:number;slPips:number;unit:'pips'|'usd';tps:{name:string;price:number}[];target:number;layer:{from:number;to:number}|null};
 };
 
 // Evaluates every A/B pair whose B opens at 01, 05 or 09 NY within the M5 window; the last items are the most recent.
-export function crtSetups(m5:Candle[],now=Date.now()):CrtSetup[]{
+// rules=false (Bitcoin): same detection, but no gold pip caps or ladder; the entry shows the structural stop and the
+// CRT target, with distances in USD.
+export function crtSetups(m5:Candle[],now=Date.now(),rules=true):CrtSetup[]{
  const boxes=h4Boxes(m5), out:CrtSetup[]=[];
  const index=new Map(m5.map((b,i)=>[b.time,i]));
  for(let k=1;k<boxes.length;k++){
@@ -58,6 +60,12 @@ export function crtSetups(m5:Candle[],now=Date.now()):CrtSetup[]{
    const next=m5[i+1], time=next?next.time:bar.time+M5, price=next?next.open:bar.close;
    const d=side==='buy'?1:-1;
    const inval=side==='sell'?Math.max(...prev.map(p=>p.high),bar.high):Math.min(...prev.map(p=>p.low),bar.low);
+   if(!rules){
+    setup.status='entrada';
+    setup.entry={time,price:round(price),sl:round(inval),slPips:Math.round(Math.abs(price-inval)),unit:'usd',tps:[{name:'Alvo CRT',price:round(target)}],target:round(target),layer:null};
+    setup.detail=`Quebra de estrutura no M5: ${side==='sell'?'venda':'compra'} em ${round(price)}, invalidação em ${round(inval)} (${Math.round(Math.abs(price-inval))} USD). Alvo CRT em ${round(target)}.`;
+    break;
+   }
    let sl=inval-d*BUFFER*PIP, slPips=Math.round(Math.abs(price-sl)/PIP);
    const cap=capFor(time), room=(target-price)*d/PIP;
    if(slPips>cap){setup.status='descartado';setup.detail=`Quebra no M5 às ${new Date(bar.time).toISOString().slice(11,16)} UTC, mas o stop técnico seria de ${slPips} pips, acima do seu limite de ${cap}.`;break}
@@ -67,7 +75,7 @@ export function crtSetups(m5:Candle[],now=Date.now()):CrtSetup[]{
    const tps=[...TP.filter(p=>p<finalPips).map((p,j)=>({name:'TP'+(j+1),price:at(p)})),{name:finalPips<TP[2]?'Alvo CRT':'TP3',price:at(finalPips)}].slice(0,3);
    const to=Math.min(20,slPips-5);
    setup.status='entrada';
-   setup.entry={time,price:round(price),sl:round(sl),slPips,tps,target:round(target),layer:to>=10?{from:at(-10),to:at(-to)}:null};
+   setup.entry={time,price:round(price),sl:round(sl),slPips,unit:'pips',tps,target:round(target),layer:to>=10?{from:at(-10),to:at(-to)}:null};
    setup.detail=`Quebra de estrutura no M5: ${side==='sell'?'venda':'compra'} em ${round(price)} com stop de ${slPips} pips. Alvo CRT em ${round(target)}.`;
    break;
   }

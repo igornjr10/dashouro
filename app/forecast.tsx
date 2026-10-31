@@ -37,7 +37,9 @@ function score(p:Prediction,candles:Candle[]|null):Result|undefined{
  const hit=p.bias==='alta'?move>0:p.bias==='baixa'?move<0:Math.abs(move)<p.refPrice*FLAT;
  return {price:exit,move,hit};
 }
-const load=():Prediction[]|null=>{try{const s=JSON.parse(localStorage.getItem(KEY)||'[]');return Array.isArray(s)?s:[]}catch{return null}};
+// One entry per analysis and horizon: earlier builds could log the same call twice, so duplicates are dropped on read.
+const unique=(list:Prediction[])=>{const seen=new Set<string>();return list.filter(p=>{const k=p.at+'|'+p.horizonHours;if(seen.has(k))return false;seen.add(k);return true})};
+const load=():Prediction[]|null=>{try{const s=JSON.parse(localStorage.getItem(KEY)||'[]');return Array.isArray(s)?unique(s):[]}catch{return null}};
 const store=(list:Prediction[])=>{try{localStorage.setItem(KEY,JSON.stringify(list))}catch{}};
 
 type Rate={total:number;hits:number};
@@ -69,7 +71,10 @@ export function usePredictions(candles:Candle[]|null,access=''){
   if(!i.reference)return;if(i.saved){sync();return}
   const ref=i.reference, mk=(c:Call):Prediction=>({at:i.at,bias:c.bias,confidence:c.confidence,horizonHours:c.horizonHours,refPrice:ref.price,refTime:ref.time,model:i.model});
   const fresh=i.short?[mk(i.short),mk(i)]:[mk(i)];
-  setSaved(s=>{const n=[...fresh,...(load()??s)].slice(0,50);store(n);return n});
+  // Built and stored outside the state updater: React may run an updater twice, and with a localStorage read inside
+  // it the second run saw the first write and logged the same analysis again.
+  const n=unique([...fresh,...(load()??[])]).slice(0,50);
+  store(n);setSaved(n);
  },[sync]);
  const clear=useCallback(()=>{store([]);setSaved([])},[]);
  return {list:remote?remote.list:local,remote,syncError,sync,add,clear};

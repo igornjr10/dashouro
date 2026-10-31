@@ -38,7 +38,7 @@ export function CrtCard({list,asset='xau'}:{list:CrtSetup[]|undefined;asset?:'xa
    </div>
    <p className={'crt-detail '+st.cls}>{s.detail}</p>
    {e&&<div className="rule-plan">
-    <div className="rule-row"><small>{sell?'Venda':'Compra'} · {brt(e.time)}</small><strong>{num(e.price)}</strong><em>preço de abertura após a quebra no M5 ({asset==='btc'?'Coinbase':'Twelve Data'})</em></div>
+    <div className="rule-row"><small>{sell?'Venda':'Compra'} · {brt(e.time)}</small><strong>{num(e.price)}</strong><em>preço de abertura após a quebra no M5 ({asset==='btc'?'bolsa de BTC':'Twelve Data'})</em></div>
     <div className="rule-row rule-sl"><small>{e.unit==='usd'?'Invalidação':'SL'}</small><strong>{num(e.sl)}</strong><em>{e.unit==='usd'?`${num(e.slPips,0)} USD da entrada · sem regra de SL para BTC`:`${e.slPips} pips · ${num(e.slPips*10)} USD por lote`}</em></div>
     {e.tps.map(t=><div key={t.name} className="rule-row rule-tp"><small>{t.name}</small><strong>{num(t.price)}</strong><em>{e.unit==='usd'?`${num(Math.abs(t.price-e.price),0)} USD`:`${Math.round(Math.abs(t.price-e.price)/0.1)} pips`}{t.name==='TP1'?' · depois, SL no BE':''}</em></div>)}
     {e.layer&&<div className="rule-row rule-layer"><small>Camada de proteção</small><strong>{num(e.layer.from)} – {num(e.layer.to)}</strong><em>mesmo lote, mesmo SL</em></div>}

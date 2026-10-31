@@ -138,7 +138,7 @@ const summarize=(s:Sentiment)=>({m5:s.m5&&{label:s.m5.summary.label,buy:s.m5.sum
 // Bitcoin variants of the two prompts: same structure and rules, BTC context (no COT, Fear & Greed instead), USD distances.
 const BTC_PROMPT=PROMPT.replace('analista de contexto do ouro (XAU/USD)','analista de contexto do Bitcoin (BTC/USD)')
  .replace('COT é semanal de futuros e notícias são só manchetes: contexto secundário.','Notícias são só manchetes e fearGreed (índice Medo e Ganância da alternative.me, 0 a 100, diário) é sentimento de varejo: contexto secundário. O Bitcoin negocia 24 horas, inclusive no fim de semana; distâncias em USD.')
- .replace('A cotação spot não é preço executável.','A cotação é o último negócio na Coinbase, não o preço da corretora.');
+ .replace('A cotação spot não é preço executável.','A cotação é o último negócio numa bolsa de BTC (Coinbase, Kraken ou Bitstamp), não o preço da corretora.');
 const BTC_CHECK_PROMPT=`Escreva TODO o texto em português do Brasil, nunca em inglês. Você explica para Igor a avaliação de uma operação em BTC/USD que ele está considerando (check.side: buy = compra, sell = venda). O veredito em check.verdict foi calculado por regras fixas e NÃO pode ser alterado nem contestado: favoravel, ressalvas, desfavoravel ou nao-operar. Responda SOMENTE com JSON válido: {"summary":"uma frase em português explicando o veredito","pros":["até 3 pontos a favor"],"cons":["até 3 pontos contra ou riscos"],"context":"até 80 palavras sobre notícias de Bitcoin e cripto, o índice Medo e Ganância (fearGreed) e a agenda dos EUA, citando fonte e data"}.
 Use só números presentes nos dados; distâncias em USD (check.references). Não invente preços, alvos, probabilidades ou eventos. Não diga para comprar nem vender: descreva os fatores e deixe a decisão com ele. Notícias são só manchetes; fearGreed é sentimento diário de varejo; na agenda, official=true é horário oficial (BLS/BEA/Fed). Se check.eventWarning existir, ele deve aparecer em cons. As regras de pips do ouro não valem para o Bitcoin.`;
 async function safe(fn:()=>Promise<unknown>){try{return {ok:true,data:await fn()}}catch(e){return {ok:false,error:e instanceof Error?e.message:'Fonte indisponível'}}}
@@ -215,7 +215,7 @@ async function insightBtc(env:RuntimeEnv,key:string){
   const dual=parseDualBias(result.text,ind,{event1h,event4h:eventSoon},{m5:ind?.trend,h1:ind?c?.intraday?.h1?.trend:undefined});
   if(!dual)return response({error:result.truncated?'A resposta ficou incompleta. Nenhuma análise parcial será apresentada; tente novamente.':'O modelo não devolveu as duas previsões no formato exigido. Nada foi apresentado; tente novamente.'},502);
   if(ind&&c)withEntries([dual.short,dual.long],side=>entryOf(checkBtc(side,c.indicators,c.intraday,events as {title:string;date:string;impact:string}[],c.stale)));
-  const reference=ind&&c?{price:ind.close,time:c.updatedAt,source:'Coinbase · fechamento M5'}:null;
+  const reference=ind&&c?{price:ind.close,time:c.updatedAt,source:c.source.replace(' · M5','')+' · fechamento M5'}:null;
   return response({...dual.long,short:dual.short,model:result.model,provider:result.provider,at,reference,eventSoon,event1h,indicators:ind,saved:false,asset:'btc'});
  }catch(e){return response({error:e instanceof RouterError?e.message:'A conexão com OpenRouter falhou ou excedeu o tempo. Tente mais tarde.'},e instanceof RouterError?e.status:502)}
 }

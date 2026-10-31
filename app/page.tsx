@@ -81,11 +81,13 @@ let k:ReturnType<typeof setTimeout>;const nextCandles=()=>{let at=Math.floor(Dat
  const crtBox=useMemo(()=>crtNow&&crtNow.status!=='sem-setup'&&crtNow.status!=='expirado'?{high:crtNow.a.high,low:crtNow.a.low}:null,[crtNow]);
  // A CRT entry is drawn for the 8h after it fires, like a fresh signal or buy/sell check.
  const crtPlan=useMemo<{at:number;plan:ChartPlan}|null>(()=>{const e=crtNow?.entry, latest=md.ok?Date.parse(md.data.updatedAt):0;return e&&crtNow?.side&&latest-e.time<8*3_600_000?{at:e.time,plan:{side:crtNow.side,entry:e.price,sl:e.sl,tps:e.tps,layer:e.layer}}:null},[crtNow,md.ok,md.data]);
+ // The latest analysis draws its suggested entry (1h first, else 4h) for 8h, like a buy/sell check.
+ const aiPlan=useMemo<{at:number;plan:ChartPlan}|null>(()=>{const e=ai&&ai.asset===asset?(ai.short?.entry??ai.entry):null;return e?{at:Date.parse(ai!.at),plan:{side:e.side,entry:e.price,sl:e.sl,tps:e.tps,layer:e.layer}}:null},[ai,asset]);
  // The gold scalping setup (Asian sweep) is drawn the same way for 8h after its entry.
  const scalpGold=(candle.ok?candle.data.scalp:null) as ScalpSetup|null;
  const scalpPlan=useMemo<{at:number;plan:ChartPlan}|null>(()=>{const e=scalpGold?.entry, latest=candle.ok?Date.parse(candle.data.updatedAt):0;return e&&scalpGold?.side&&latest-e.time<8*3_600_000?{at:e.time,plan:{side:scalpGold.side,entry:e.price,sl:e.sl,tps:e.tps,layer:e.layer}}:null},[scalpGold,candle.ok,candle.data]);
  // On Bitcoin only its CRT plan applies; buy/sell checks and pasted signals are gold plans.
- const chartPlan=useMemo(()=>(asset==='btc'?[crtPlan]:[tradePlan,signalPlan,crtPlan,scalpPlan]).filter(Boolean).sort((x,y)=>y!.at-x!.at)[0]?.plan??null,[asset,tradePlan,signalPlan,crtPlan,scalpPlan]);
+ const chartPlan=useMemo(()=>(asset==='btc'?[crtPlan,aiPlan]:[tradePlan,signalPlan,crtPlan,scalpPlan,aiPlan]).filter(Boolean).sort((x,y)=>y!.at-x!.at)[0]?.plan??null,[asset,tradePlan,signalPlan,crtPlan,scalpPlan,aiPlan]);
  const setAsset=(v:'xau'|'btc')=>{if(v!==assetRef.current){setAi(null);setAiError('');trade.clear()}setAssetState(v);assetRef.current=v;try{localStorage.setItem('aurum-asset',v)}catch{}if(v==='btc'){read('btc/candles');read('btc/quote')}};
  const riskDay=useRiskDay(now);
  const alerts=useAlerts({price:dataReady?quote.data.price:null,levels:candle.ok?candle.data.indicators?.levels??null:null,insight:ai,events:cal.ok?cal.data.events:[],now,crt:crtGold,scalp:scalpGold});

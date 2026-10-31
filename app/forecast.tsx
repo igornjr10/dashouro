@@ -4,8 +4,10 @@ import type {SignalHistory} from './signals';
 import {AlertTriangle,ArrowDownRight,ArrowUpRight,Minus,Target,Trash2} from 'lucide-react';
 
 export type Level='high2h'|'low2h'|'highWindow'|'lowWindow'|'ema20'|'ema50'|'pdh'|'pdl'|'pdc'|'asiaHigh'|'asiaLow'|'londonHigh'|'londonLow';
+// Entry the server derives for a directional call from the buy/sell-check rules (lib/market.ts CallEntry).
+export type CallEntry={side:'buy'|'sell';price:number;sl:number;risk:number;unit:'pips'|'usd';tps:{name:string;price:number}[];layer:{from:number;to:number}|null;verdict:string;passed:number;total:number;block:string|null;rr:number|null};
 type Call={
- bias:'alta'|'baixa'|'neutro'; confidence:'baixa'|'media'|'alta'; horizonHours:number;
+ bias:'alta'|'baixa'|'neutro'; confidence:'baixa'|'media'|'alta'; horizonHours:number; entry?:CallEntry|null;
  drivers:{text:string;source:string}[];
  invalidation:{level:Level;condition:'acima'|'abaixo';price:number}|null;
 };
@@ -15,18 +17,40 @@ export type Insight=Call&{
  analysis:string; model:string; at:string; eventSoon:boolean;
  reference:{price:number;time:string;source:string}|null;
 };
-type Candle={time:number;close:number};
+type Candle={time:number;high:number;low:number;close:number};
 type Result={price:number;move:number;hit:boolean}|'unchecked';
-export type Prediction={at:string;bias:Insight['bias'];confidence:Insight['confidence'];horizonHours:number;refPrice:number;refTime:string;model:string;result?:Result};
+// outcome: how the suggested entry played out (final once stopped, at the last target, or 24h old).
+type Outcome={status:string;good:boolean|null;final:boolean};
+export type Prediction={at:string;bias:Insight['bias'];confidence:Insight['confidence'];horizonHours:number;refPrice:number;refTime:string;model:string;result?:Result;entry?:CallEntry|null;outcome?:Outcome};
 
 const KEY='aurum-predictions';
 // A move under 0.15% counts as flat: neutral calls hit inside that band, directional calls only need the right sign.
 const FLAT=0.0015;
 export const levelNames:Record<Level,string>={high2h:'máxima das últimas 2h',low2h:'mínima das últimas 2h',highWindow:'máxima da janela M5',lowWindow:'mínima da janela M5',ema20:'EMA 20',ema50:'EMA 50',pdh:'máxima de ontem',pdl:'mínima de ontem',pdc:'fechamento de ontem',asiaHigh:'máxima da Ásia',asiaLow:'mínima da Ásia',londonHigh:'máxima de Londres',londonLow:'mínima de Londres'};
 const biasNames={alta:'Alta',baixa:'Baixa',neutro:'Neutro'};
+const verdictNames:Record<string,string>={favoravel:'Favorável',ressalvas:'Com ressalvas',desfavoravel:'Desfavorável','nao-operar':'Não operar'};
 const confNames={baixa:'baixa',media:'média',alta:'alta'};
 const num=(v:number,d=2)=>new Intl.NumberFormat('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d}).format(v);
 const time=(v:string)=>new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Fortaleza',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(v));
+
+// Replays the M5 bars after the reference close: the stop counts first when a bar touches both; after TP1 the stop
+// moves to the entry (TP1 then BE counts as TP1, Igor's rule). Undefined when the bars no longer cover the start.
+function scoreEntry(p:Prediction,candles:Candle[]|null):Outcome|undefined{
+ const e=p.entry; if(!e||!candles?.length)return undefined;
+ const start=Date.parse(p.refTime), d=e.side==='buy'?1:-1;
+ if(candles[0].time>start)return undefined;
+ let reached=0;
+ const hit=(n:number)=>({status:n?e.tps[n-1].name:'SL',good:n>0,final:true});
+ for(const b of candles){
+  if(b.time<start)continue;
+  if(b.time-start>=24*3600000)return {status:reached?e.tps[reached-1].name:'expirou',good:reached?true:null,final:true};
+  const stop=reached?e.price:e.sl;
+  if(d>0?b.low<=stop:b.high>=stop)return hit(reached);
+  while(reached<e.tps.length&&(d>0?b.high>=e.tps[reached].price:b.low<=e.tps[reached].price))reached++;
+  if(e.tps.length&&reached===e.tps.length)return hit(reached);
+ }
+ return {status:reached?e.tps[reached-1].name+' · aberta':'aberta',good:reached?true:null,final:false};
+}
 
 function score(p:Prediction,candles:Candle[]|null):Result|undefined{
  if(!candles?.length)return undefined;
@@ -66,12 +90,12 @@ export function usePredictions(candles:Candle[]|null,accessToken='',asset:'xau'|
  // Re-sync when the token changes and on each M5 refresh, which is when the server can score pending predictions.
  // eslint-disable-next-line react-hooks/set-state-in-effect
  useEffect(()=>{sync()},[sync,candles]);
- const local=useMemo(()=>saved.map(p=>p.result?p:{...p,result:score(p,candles)}),[saved,candles]);
+ const local=useMemo(()=>saved.map(p=>({...p,result:p.result??score(p,candles),outcome:p.outcome?.final?p.outcome:scoreEntry(p,candles)??p.outcome})),[saved,candles]);
  // Persist results as soon as they are scored, because the M5 window only covers the last ~8h.
- useEffect(()=>{if(local.some((p,i)=>p.result&&!saved[i].result))store(local,key)},[local,saved,key]);
+ useEffect(()=>{if(local.some((p,i)=>(p.result&&!saved[i].result)||(p.outcome?.final&&!saved[i].outcome?.final)))store(local,key)},[local,saved,key]);
  const add=useCallback((i:Insight&{saved?:boolean})=>{
   if(!i.reference)return;if(i.saved){sync();return}
-  const ref=i.reference, mk=(c:Call):Prediction=>({at:i.at,bias:c.bias,confidence:c.confidence,horizonHours:c.horizonHours,refPrice:ref.price,refTime:ref.time,model:i.model});
+  const ref=i.reference, mk=(c:Call):Prediction=>({at:i.at,bias:c.bias,confidence:c.confidence,horizonHours:c.horizonHours,refPrice:ref.price,refTime:ref.time,model:i.model,entry:c.entry??null});
   const fresh=i.short?[mk(i.short),mk(i)]:[mk(i)];
   // Built and stored outside the state updater: React may run an updater twice, and with a localStorage read inside
   // it the second run saw the first write and logged the same analysis again.
@@ -84,6 +108,18 @@ export function usePredictions(candles:Candle[]|null,accessToken='',asset:'xau'|
 
 const BiasIcon=({bias,size=22}:{bias:Insight['bias'];size?:number})=>bias==='alta'?<ArrowUpRight size={size}/>:bias==='baixa'?<ArrowDownRight size={size}/>:<Minus size={size}/>;
 
+function EntryBlock({e}:{e:CallEntry}){
+ const pips=e.unit==='pips', dist=(p:number)=>pips?`${Math.round(Math.abs(p-e.price)/0.1)} pips`:`${num(Math.abs(p-e.price),0)} USD`;
+ return <div className="call-entry">
+  <div className="call-entry-head"><small>ENTRADA SUGERIDA</small><strong className={e.side==='buy'?'green':'red'}>{e.side==='buy'?'Compra':'Venda'} em {num(e.price)}</strong>
+   <em>{e.block?`Bloqueada: ${e.block}`:`${verdictNames[e.verdict]||e.verdict} · ${e.passed}/${e.total} critérios${e.rr!==null?` · R:R ${num(e.rr)}`:''}`}</em></div>
+  <div className="rule-plan">
+   <div className="rule-row rule-sl"><small>SL</small><strong>{num(e.sl)}</strong><em>{pips?`${e.risk} pips · ${num(e.risk*10)} USD por lote`:`${num(e.risk,0)} USD da entrada`}</em></div>
+   {e.tps.map(t=><div key={t.name} className="rule-row rule-tp"><small>{t.name}</small><strong>{num(t.price)}</strong><em>{dist(t.price)}{t.name==='TP1'?' · depois, SL no BE':''}</em></div>)}
+   {e.layer&&<div className="rule-row rule-layer"><small>Camada</small><strong>{num(e.layer.from)} – {num(e.layer.to)}</strong><em>mesmo lote, mesmo SL</em></div>}
+  </div>
+ </div>;
+}
 function CallCard({c,title,event}:{c:Call;title:string;event:boolean}){
  const inv=c.invalidation;
  return <div className={'bias-card bias-'+c.bias}>
@@ -92,6 +128,8 @@ function CallCard({c,title,event}:{c:Call;title:string;event:boolean}){
    <div><small>Confiança</small><strong>{confNames[c.confidence]}</strong></div>
    <div><small>Invalida se</small><strong>{inv?`fechar ${inv.condition} de ${num(inv.price)}`:'—'}</strong>{inv&&<em>{levelNames[inv.level]}</em>}</div>
   </div>
+  {c.entry&&<EntryBlock e={c.entry}/>}
+  {c.bias==='neutro'&&<div className="call-entry muted small">Viés neutro: sem entrada sugerida neste prazo.</div>}
   {event&&<div className="bias-warning"><AlertTriangle size={14}/>Evento USD de alto impacto neste prazo: confiança limitada a média.</div>}
   {c.drivers.length>0&&<ol className="bias-drivers">{c.drivers.map((d,i)=><li key={i}>{d.text}<small>{d.source}</small></li>)}</ol>}
  </div>;
@@ -106,11 +144,10 @@ export function Forecast({insight}:{insight:Insight}){
   </div>
   {split&&<div className="bias-split">Os prazos discordam: {biasNames[s.bias].toLowerCase()} na próxima hora contra {biasNames[insight.bias].toLowerCase()} nas próximas 4h. Movimento contra a tendência maior costuma ser mais curto.</div>}
   <p className="analysis-text" aria-live="polite">{insight.analysis}</p>
-  <div className="panel-note">Viés probabilístico, não sinal de entrada. Indicadores calculados no servidor; níveis vêm dos candles da Twelve Data, não do modelo. {insight.reference?`Preço de referência ${num(insight.reference.price)} (${insight.reference.source}, ${time(insight.reference.time)}).`:'Sem candles M5 atuais: viés forçado a neutro.'}</div>
+  <div className="panel-note">Viés probabilístico. A entrada sugerida sai das mesmas regras do Avaliar compra/venda (preço no fechamento M5, stop técnico{insight.asset==='btc'?', alvo no próximo nível':', TPs 20/45/80 e camada'}), não do modelo; o veredito mostra se o mercado favorece entrar agora. Indicadores calculados no servidor; níveis vêm dos candles da Twelve Data, não do modelo. {insight.reference?`Preço de referência ${num(insight.reference.price)} (${insight.reference.source}, ${time(insight.reference.time)}).`:'Sem candles M5 atuais: viés forçado a neutro.'}</div>
  </div>;
 }
 
-const verdictNames:Record<string,string>={favoravel:'Favorável',ressalvas:'Com ressalvas',desfavoravel:'Desfavorável','nao-operar':'Não operar'};
 const pct=(r?:Rate)=>r&&r.total?`${Math.round(r.hits/r.total*100)}% (${r.hits}/${r.total})`:'—';
 function AccessForm({onSave}:{onSave:(v:string)=>void}){
  return <form className="access-form" onSubmit={e=>{e.preventDefault();const v=(e.currentTarget.elements.namedItem('access') as HTMLInputElement).value.trim();if(v)onSave(v)}}>
@@ -123,6 +160,7 @@ export function Scoreboard({predictions,clear,dbConfigured,access,setAccess}:{pr
  const done=list.filter(p=>p.result&&p.result!=='unchecked') as (Prediction&{result:{price:number;move:number;hit:boolean}})[];
  const hits=done.filter(p=>p.result.hit).length, pending=list.filter(p=>!p.result).length;
  const total=remote?remote.stats.overall:{total:done.length,hits};
+ const entries=list.filter(p=>p.outcome?.final&&p.outcome.good!==null), entryWins=entries.filter(p=>p.outcome!.good).length;
  return <section className="panel scoreboard">
   <div className="panel-heading"><h2><Target size={17}/>Placar das previsões · {btc?'BTC/USD':'XAU/USD'}</h2>
    {remote?<span className="status-pill good">Banco sincronizado</span>:list.length>0&&<button className="icon-button" aria-label="Apagar histórico de previsões deste navegador" onClick={clear}><Trash2 size={15}/></button>}
@@ -133,12 +171,13 @@ export function Scoreboard({predictions,clear,dbConfigured,access,setAccess}:{pr
     <div><small>Acertos</small><strong>{total.total?`${total.hits} de ${total.total}`:'—'}</strong></div>
     <div><small>Taxa</small><strong>{total.total?`${Math.round(total.hits/total.total*100)}%`:'—'}</strong></div>
     <div><small>Aguardando</small><strong>{pending}</strong></div>
+    <div><small>Entradas no TP1+</small><strong>{entries.length?`${entryWins} de ${entries.length}`:'—'}</strong></div>
     {remote&&<><div><small>1h (scalping)</small><strong>{pct(remote.stats.byHorizon?.['1'])}</strong></div><div><small>4h (day trade)</small><strong>{pct(remote.stats.byHorizon?.['4'])}</strong></div><div><small>Confiança alta</small><strong>{pct(remote.stats.byConfidence.alta)}</strong></div><div><small>Confiança média</small><strong>{pct(remote.stats.byConfidence.media)}</strong></div><div><small>Confiança baixa</small><strong>{pct(remote.stats.byConfidence.baixa)}</strong></div></>}
    </div>
    <div className="score-list">{list.slice(0,8).map((p,i)=><div key={i} className="score-row">
     <span className={'bias-chip bias-'+p.bias}><BiasIcon bias={p.bias} size={13}/>{biasNames[p.bias]}</span>
     <span className="score-when">{time(p.at)} · {p.horizonHours}h · conf. {confNames[p.confidence]}</span>
-    <span className="score-result">{!p.result?'aguardando':p.result==='unchecked'?'não conferida':<>{num(p.refPrice)} → {num(p.result.price)} <b className={p.result.hit?'green':'red'}>{p.result.hit?'acertou':'errou'}</b></>}</span>
+    <span className="score-result">{!p.result?'aguardando':p.result==='unchecked'?'não conferida':<>{num(p.refPrice)} → {num(p.result.price)} <b className={p.result.hit?'green':'red'}>{p.result.hit?'acertou':'errou'}</b></>}{p.outcome&&<span className={'score-entry '+(p.outcome.good===true?'green':p.outcome.good===false?'red':'muted')}>entrada: {p.outcome.status}</span>}</span>
    </div>)}</div>
   </>}
   {remote&&remote.checks.length>0&&<><div className="score-subhead">Últimas avaliações de compra e venda</div><div className="score-list">{remote.checks.slice(0,8).map(c=><div key={c.id} className="score-row">

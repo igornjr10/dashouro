@@ -185,6 +185,18 @@ const response=(data:unknown,status=200,ttl=0)=>Response.json(data,{status,heade
 // Edge functions must start responding within ~25s, but free models can take 30–60s. Slow AI routes answer at once with a
 // stream that sends a space every 5s and then the JSON (leading whitespace is valid JSON). The real status goes in the body
 // as `status` and errors keep their `error` field, so clients check `error` rather than the HTTP code.
+// Entry for a directional call, from the same fixed rules as the buy/sell check (price at the M5 close, structural stop,
+// Igor's ladder and layer for gold; USD stop and target for Bitcoin), with that check's verdict. Neutral calls get none.
+export type CallEntry={side:'buy'|'sell';price:number;sl:number;risk:number;unit:'pips'|'usd';tps:{name:string;price:number}[];layer:{from:number;to:number}|null;verdict:string;passed:number;total:number;block:string|null;rr:number|null};
+function entryOf(r:ReturnType<typeof checkTrade>|ReturnType<typeof checkBtc>):CallEntry{
+ const base={side:r.side,price:r.price,sl:r.references.stop.price,verdict:r.verdict,passed:r.passed,total:r.total,block:r.block,rr:r.references.rr};
+ if('plan' in r)return {...base,risk:r.plan.slPips,unit:'pips',tps:r.plan.tps.map(t=>({name:t.name,price:t.price})),layer:r.plan.layer?{from:r.plan.layer.from,to:r.plan.layer.to}:null};
+ return {...base,risk:r.references.risk,unit:'usd',tps:r.references.target?[{name:'Alvo',price:r.references.target.price}]:[],layer:null};
+}
+function withEntries<T extends {bias:string}>(calls:T[],run:(side:'buy'|'sell')=>CallEntry){
+ const memo:Partial<Record<'buy'|'sell',CallEntry>>={};
+ for(const c of calls){const side=c.bias==='alta'?'buy':c.bias==='baixa'?'sell':null;(c as T&{entry:CallEntry|null}).entry=side?memo[side]??=run(side):null}
+}
 type BtcData={candles:Candle[];indicators:Indicators;intraday:Intraday|null;sentiment:Sentiment;fearGreed:unknown;updatedAt:string;stale:boolean;source:string};
 // Bitcoin analysis: same dual 1h/4h call and server caps as gold, with Coinbase candles, crypto news and Fear & Greed.
 // Not stored: the prediction table and scoreboard are gold-only.
@@ -201,6 +213,7 @@ async function insightBtc(env:RuntimeEnv,key:string){
   const result=await generateInsight(key,BTC_PROMPT,context,true);
   const dual=parseDualBias(result.text,ind,{event1h,event4h:eventSoon},{m5:ind?.trend,h1:ind?c?.intraday?.h1?.trend:undefined});
   if(!dual)return response({error:result.truncated?'A resposta ficou incompleta. Nenhuma análise parcial será apresentada; tente novamente.':'O modelo não devolveu as duas previsões no formato exigido. Nada foi apresentado; tente novamente.'},502);
+  if(ind&&c)withEntries([dual.short,dual.long],side=>entryOf(checkBtc(side,c.indicators,c.intraday,events as {title:string;date:string;impact:string}[],c.stale)));
   const reference=ind&&c?{price:ind.close,time:c.updatedAt,source:'Coinbase · fechamento M5'}:null;
   return response({...dual.long,short:dual.short,model:result.model,provider:result.provider,at,reference,eventSoon,event1h,indicators:ind,saved:false,asset:'btc'});
  }catch(e){return response({error:e instanceof RouterError?e.message:'A conexão com OpenRouter falhou ou excedeu o tempo. Tente mais tarde.'},e instanceof RouterError?e.status:502)}
@@ -324,6 +337,7 @@ async function route(request:Request,env:RuntimeEnv):Promise<Response>{
    const result=await generateInsight(key,PROMPT,context,true);
    const dual=parseDualBias(result.text,ind,{event1h,event4h:eventSoon},{m5:ind?.trend,h1:ind?c?.intraday?.h1?.trend:undefined});
    if(!dual)return response({error:result.truncated?'A resposta ficou incompleta. Nenhuma análise parcial será apresentada; tente novamente.':'O modelo não devolveu as duas previsões no formato exigido. Nada foi apresentado; tente novamente.'},502);
+   if(ind&&c)withEntries([dual.short,dual.long],side=>entryOf(checkTrade(side,c.indicators,c.intraday,events as {title:string;date:string;impact:string}[],c.stale)));
    const reference=ind&&c?{price:ind.close,time:c.updatedAt,source:'Twelve Data · fechamento M5'}:null;
    // Each horizon is stored and scored on its own, so the scoreboard can compare the 1h and 4h hit rates.
    const saved=reference?await persist(env,request,()=>Promise.all([savePrediction(env,dual.short,reference,result.model),savePrediction(env,dual.long,reference,result.model)])):false;

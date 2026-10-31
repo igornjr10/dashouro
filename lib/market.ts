@@ -1,7 +1,8 @@
 import {checkRouterKey,generateInsight,requestKey,RouterError,FREE_MODEL} from './openrouter';
 import {indicators,intraday,intradayLevels,parseDualBias,type Candle,type Indicators,type Intraday} from './indicators';
 import {checkTrade} from './trade-check';
-import {authorized,history,saveCheck,savePrediction,saveSignal,scoreSignals,signalHistory,storeEnabled,type StoreEnv} from './store';
+import {alerts,sendAlerts} from './notify';
+import {authorized,claimAlert,releaseAlert,history,saveCheck,savePrediction,saveSignal,scoreSignals,signalHistory,storeEnabled,type StoreEnv} from './store';
 import {parseSignal,ruleCheck} from './signals';
 import {gauge,pressure} from './sentiment';
 import {crtSetups} from './crt';
@@ -9,6 +10,7 @@ import {asiaSweep} from './scalp';
 import {getOfficialCalendar} from './official-calendar';
 import {getBtcCandles,getBtcQuote} from './btc';
 import {checkBtc} from './btc-check';
+import type {CallEntry} from './entry-outcome';
 // Saving is best effort: a database failure never blocks the analysis the user asked for.
 const persist=async(env:RuntimeEnv,request:Request,write:()=>Promise<unknown>)=>{
  if(!storeEnabled(env)||!authorized(request,env))return false;
@@ -187,7 +189,6 @@ const response=(data:unknown,status=200,ttl=0)=>Response.json(data,{status,heade
 // as `status` and errors keep their `error` field, so clients check `error` rather than the HTTP code.
 // Entry for a directional call, from the same fixed rules as the buy/sell check (price at the M5 close, structural stop,
 // Igor's ladder and layer for gold; USD stop and target for Bitcoin), with that check's verdict. Neutral calls get none.
-export type CallEntry={side:'buy'|'sell';price:number;sl:number;risk:number;unit:'pips'|'usd';tps:{name:string;price:number}[];layer:{from:number;to:number}|null;verdict:string;passed:number;total:number;block:string|null;rr:number|null};
 function entryOf(r:ReturnType<typeof checkTrade>|ReturnType<typeof checkBtc>):CallEntry{
  const base={side:r.side,price:r.price,sl:r.references.stop.price,verdict:r.verdict,passed:r.passed,total:r.total,block:r.block,rr:r.references.rr};
  if('plan' in r)return {...base,risk:r.plan.slPips,unit:'pips',tps:r.plan.tps.map(t=>({name:t.name,price:t.price})),layer:r.plan.layer?{from:r.plan.layer.from,to:r.plan.layer.to}:null};
@@ -293,6 +294,19 @@ async function route(request:Request,env:RuntimeEnv):Promise<Response>{
   const key=o?.chat&&o.message_id?`tg:${o.chat.id}:${o.message_id}`:`tg:${m.chat.id}:${m.message_id}`;
   await send(telegramReply(await processSignal(env,text,'telegram',signalTime,key,storeEnabled(env))));
   return response({ok:true});
+ }
+ // Telegram alerts for gold, called every 5 minutes by the database scheduler (scripts/notify-cron.mjs) with the access token.
+ if(path==='/api/notify'){
+  if(!storeEnabled(env)||!authorized(request,env))return response({error:'Não autorizado'},401);
+  if(!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_OWNER_ID)return response({error:'Telegram não configurado (TELEGRAM_BOT_TOKEN e TELEGRAM_OWNER_ID).'},503);
+  // Read through the CDN: the panel and the scheduler share one cached candle response, so alerts add no Twelve Data calls.
+  const get=async(p:string)=>{const r=await fetch(new URL(p,request.url),{signal:AbortSignal.timeout(20000)});const j=await r.json() as {ok:boolean;data:unknown;error?:string};if(!j.ok)throw new Error(j.error||p+' indisponível');return j.data};
+  const [candles,calendar]=await Promise.all([safe(()=>get('/api/candles')),safe(()=>get('/api/calendar'))]);
+  if(!candles.ok)return response({error:'Sem candles M5 para os alertas.'},503);
+  const msgs=alerts(candles.data as Parameters<typeof alerts>[0],calendar.ok?(calendar.data as {events:Parameters<typeof alerts>[1]}).events:[],Date.now());
+  const tg=async(text:string)=>{const r=await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:env.TELEGRAM_OWNER_ID,text}),signal:AbortSignal.timeout(8000)});if(!r.ok)throw new Error('Telegram respondeu HTTP '+r.status)};
+  try{return response({ok:true,sent:await sendAlerts(msgs,k=>claimAlert(env,k),tg,k=>releaseAlert(env,k).then(()=>{}))})}
+  catch(e){return response({error:e instanceof Error?e.message:'Falha ao enviar alertas.'},502)}
  }
  if(path==='/api/check'){
   if(request.method!=='POST')return response({error:'Método inválido'},405);

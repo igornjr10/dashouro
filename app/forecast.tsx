@@ -1,11 +1,11 @@
 'use client';
 import {useState,useEffect,useMemo,useCallback} from 'react';
+import {scoreEntry,type CallEntry,type Outcome} from '../lib/entry-outcome';
+export type {CallEntry};
 import type {SignalHistory} from './signals';
 import {AlertTriangle,ArrowDownRight,ArrowUpRight,Minus,Target,Trash2} from 'lucide-react';
 
 export type Level='high2h'|'low2h'|'highWindow'|'lowWindow'|'ema20'|'ema50'|'pdh'|'pdl'|'pdc'|'asiaHigh'|'asiaLow'|'londonHigh'|'londonLow';
-// Entry the server derives for a directional call from the buy/sell-check rules (lib/market.ts CallEntry).
-export type CallEntry={side:'buy'|'sell';price:number;sl:number;risk:number;unit:'pips'|'usd';tps:{name:string;price:number}[];layer:{from:number;to:number}|null;verdict:string;passed:number;total:number;block:string|null;rr:number|null};
 type Call={
  bias:'alta'|'baixa'|'neutro'; confidence:'baixa'|'media'|'alta'; horizonHours:number; entry?:CallEntry|null;
  drivers:{text:string;source:string}[];
@@ -19,8 +19,6 @@ export type Insight=Call&{
 };
 type Candle={time:number;high:number;low:number;close:number};
 type Result={price:number;move:number;hit:boolean}|'unchecked';
-// outcome: how the suggested entry played out (final once stopped, at the last target, or 24h old).
-type Outcome={status:string;good:boolean|null;final:boolean};
 export type Prediction={at:string;bias:Insight['bias'];confidence:Insight['confidence'];horizonHours:number;refPrice:number;refTime:string;model:string;result?:Result;entry?:CallEntry|null;outcome?:Outcome};
 
 const KEY='aurum-predictions';
@@ -32,25 +30,6 @@ const verdictNames:Record<string,string>={favoravel:'Favorável',ressalvas:'Com 
 const confNames={baixa:'baixa',media:'média',alta:'alta'};
 const num=(v:number,d=2)=>new Intl.NumberFormat('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d}).format(v);
 const time=(v:string)=>new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Fortaleza',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(v));
-
-// Replays the M5 bars after the reference close: the stop counts first when a bar touches both; after TP1 the stop
-// moves to the entry (TP1 then BE counts as TP1, Igor's rule). Undefined when the bars no longer cover the start.
-function scoreEntry(p:Prediction,candles:Candle[]|null):Outcome|undefined{
- const e=p.entry; if(!e||!candles?.length)return undefined;
- const start=Date.parse(p.refTime), d=e.side==='buy'?1:-1;
- if(candles[0].time>start)return undefined;
- let reached=0;
- const hit=(n:number)=>({status:n?e.tps[n-1].name:'SL',good:n>0,final:true});
- for(const b of candles){
-  if(b.time<start)continue;
-  if(b.time-start>=24*3600000)return {status:reached?e.tps[reached-1].name:'expirou',good:reached?true:null,final:true};
-  const stop=reached?e.price:e.sl;
-  if(d>0?b.low<=stop:b.high>=stop)return hit(reached);
-  while(reached<e.tps.length&&(d>0?b.high>=e.tps[reached].price:b.low<=e.tps[reached].price))reached++;
-  if(e.tps.length&&reached===e.tps.length)return hit(reached);
- }
- return {status:reached?e.tps[reached-1].name+' · aberta':'aberta',good:reached?true:null,final:false};
-}
 
 function score(p:Prediction,candles:Candle[]|null):Result|undefined{
  if(!candles?.length)return undefined;
@@ -68,9 +47,10 @@ const store=(list:Prediction[],key=KEY)=>{try{localStorage.setItem(key,JSON.stri
 
 type Rate={total:number;hits:number};
 export type CheckRow={id:string;created_at:string;side:'buy'|'sell';verdict:string;passed:number;total:number;price:number;stop_price:number;target_price:number|null;rr:number|null;block:string|null};
-type Remote={list:Prediction[];checks:CheckRow[];signals:SignalHistory|null;stats:{overall:Rate;byBias:Record<string,Rate>;byConfidence:Record<string,Rate>;byHorizon?:Record<string,Rate>}};
-type ServerRow={created_at:string;bias:Prediction['bias'];confidence:Prediction['confidence'];horizon_hours:number;ref_price:number;ref_time:string;model:string|null;status:string;result_price:number|null;result_move:number|null;hit:boolean|null};
+type Remote={list:Prediction[];checks:CheckRow[];signals:SignalHistory|null;stats:{overall:Rate;byBias:Record<string,Rate>;byConfidence:Record<string,Rate>;byHorizon?:Record<string,Rate>;entries?:Rate}};
+type ServerRow={entry?:CallEntry|null;entry_status?:string|null;entry_good?:boolean|null;entry_final?:boolean|null;created_at:string;bias:Prediction['bias'];confidence:Prediction['confidence'];horizon_hours:number;ref_price:number;ref_time:string;model:string|null;status:string;result_price:number|null;result_move:number|null;hit:boolean|null};
 const fromServer=(r:ServerRow):Prediction=>({at:r.created_at,bias:r.bias,confidence:r.confidence,horizonHours:r.horizon_hours,refPrice:Number(r.ref_price),refTime:r.ref_time,model:r.model||'',
+ entry:r.entry??null,outcome:r.entry_status?{status:r.entry_status,good:r.entry_good??null,final:!!r.entry_final}:undefined,
  result:r.status==='pending'?undefined:r.status==='unchecked'?'unchecked':{price:Number(r.result_price),move:Number(r.result_move),hit:!!r.hit}});
 
 // With an access token the database is the source of truth (scored on the server); without one, the browser log stays as before.
@@ -90,7 +70,7 @@ export function usePredictions(candles:Candle[]|null,accessToken='',asset:'xau'|
  // Re-sync when the token changes and on each M5 refresh, which is when the server can score pending predictions.
  // eslint-disable-next-line react-hooks/set-state-in-effect
  useEffect(()=>{sync()},[sync,candles]);
- const local=useMemo(()=>saved.map(p=>({...p,result:p.result??score(p,candles),outcome:p.outcome?.final?p.outcome:scoreEntry(p,candles)??p.outcome})),[saved,candles]);
+ const local=useMemo(()=>saved.map(p=>({...p,result:p.result??score(p,candles),outcome:p.outcome?.final?p.outcome:scoreEntry(p.entry,Date.parse(p.refTime),candles)??p.outcome})),[saved,candles]);
  // Persist results as soon as they are scored, because the M5 window only covers the last ~8h.
  useEffect(()=>{if(local.some((p,i)=>(p.result&&!saved[i].result)||(p.outcome?.final&&!saved[i].outcome?.final)))store(local,key)},[local,saved,key]);
  const add=useCallback((i:Insight&{saved?:boolean})=>{
@@ -160,7 +140,7 @@ export function Scoreboard({predictions,clear,dbConfigured,access,setAccess}:{pr
  const done=list.filter(p=>p.result&&p.result!=='unchecked') as (Prediction&{result:{price:number;move:number;hit:boolean}})[];
  const hits=done.filter(p=>p.result.hit).length, pending=list.filter(p=>!p.result).length;
  const total=remote?remote.stats.overall:{total:done.length,hits};
- const entries=list.filter(p=>p.outcome?.final&&p.outcome.good!==null), entryWins=entries.filter(p=>p.outcome!.good).length;
+ const finals=list.filter(p=>p.outcome?.final&&p.outcome.good!==null), entryRate=remote?.stats.entries??{total:finals.length,hits:finals.filter(p=>p.outcome!.good).length};
  return <section className="panel scoreboard">
   <div className="panel-heading"><h2><Target size={17}/>Placar das previsões · {btc?'BTC/USD':'XAU/USD'}</h2>
    {remote?<span className="status-pill good">Banco sincronizado</span>:list.length>0&&<button className="icon-button" aria-label="Apagar histórico de previsões deste navegador" onClick={clear}><Trash2 size={15}/></button>}
@@ -171,7 +151,7 @@ export function Scoreboard({predictions,clear,dbConfigured,access,setAccess}:{pr
     <div><small>Acertos</small><strong>{total.total?`${total.hits} de ${total.total}`:'—'}</strong></div>
     <div><small>Taxa</small><strong>{total.total?`${Math.round(total.hits/total.total*100)}%`:'—'}</strong></div>
     <div><small>Aguardando</small><strong>{pending}</strong></div>
-    <div><small>Entradas no TP1+</small><strong>{entries.length?`${entryWins} de ${entries.length}`:'—'}</strong></div>
+    <div><small>Entradas no TP1+</small><strong>{entryRate.total?`${entryRate.hits} de ${entryRate.total}`:'—'}</strong></div>
     {remote&&<><div><small>1h (scalping)</small><strong>{pct(remote.stats.byHorizon?.['1'])}</strong></div><div><small>4h (day trade)</small><strong>{pct(remote.stats.byHorizon?.['4'])}</strong></div><div><small>Confiança alta</small><strong>{pct(remote.stats.byConfidence.alta)}</strong></div><div><small>Confiança média</small><strong>{pct(remote.stats.byConfidence.media)}</strong></div><div><small>Confiança baixa</small><strong>{pct(remote.stats.byConfidence.baixa)}</strong></div></>}
    </div>
    <div className="score-list">{list.slice(0,8).map((p,i)=><div key={i} className="score-row">

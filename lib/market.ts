@@ -305,6 +305,12 @@ async function route(request:Request,env:RuntimeEnv):Promise<Response>{
   if(!candles.ok)return response({error:'Sem candles M5 para os alertas.'},503);
   const msgs=alerts(candles.data as Parameters<typeof alerts>[0],calendar.ok?(calendar.data as {events:Parameters<typeof alerts>[1]}).events:[],Date.now());
   const tg=async(text:string)=>{const r=await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:env.TELEGRAM_OWNER_ID,text}),signal:AbortSignal.timeout(8000)});if(!r.ok)throw new Error('Telegram respondeu HTTP '+r.status)};
+  // ?test=1 sends one status message now (not recorded), to check the bot end to end.
+  if(new URL(request.url).searchParams.get('test')==='1'){
+   const d=candles.data as Parameters<typeof alerts>[0];
+   const text=['✅ Aurum · teste de alerta','O robô está ligado e vai avisar aqui.',`Scalping: ${d.scalp?.detail??'—'}`,`CRT: ${d.crt?.at(-1)?.detail??'—'}`,msgs.length?`Alertas pendentes agora: ${msgs.length}`:'Nenhum alerta pendente agora.'].join('\n');
+   try{await tg(text);return response({ok:true,test:true})}catch(e){return response({error:e instanceof Error?e.message:'Falha ao enviar.'},502)}
+  }
   try{return response({ok:true,sent:await sendAlerts(msgs,k=>claimAlert(env,k),tg,k=>releaseAlert(env,k).then(()=>{}))})}
   catch(e){return response({error:e instanceof Error?e.message:'Falha ao enviar alertas.'},502)}
  }

@@ -1,13 +1,16 @@
 import {checkRouterKey,generateInsight,requestKey,RouterError,FREE_MODEL} from './openrouter';
 import {indicators,intraday,intradayLevels,parseDualBias,type Candle,type Indicators,type Intraday} from './indicators';
 import {checkTrade} from './trade-check';
-import {authorized,history,saveCheck,savePrediction,saveSignal,scoreSignals,signalHistory,storeEnabled,type StoreEnv} from './store';
+import {alerts,sendAlerts} from './notify';
+import {authorized,claimAlert,releaseAlert,history,saveCheck,savePrediction,saveSignal,scoreSignals,signalHistory,storeEnabled,type StoreEnv} from './store';
 import {parseSignal,ruleCheck} from './signals';
 import {gauge,pressure} from './sentiment';
 import {crtSetups} from './crt';
+import {asiaSweep} from './scalp';
 import {getOfficialCalendar} from './official-calendar';
 import {getBtcCandles,getBtcQuote} from './btc';
 import {checkBtc} from './btc-check';
+import type {CallEntry} from './entry-outcome';
 // Saving is best effort: a database failure never blocks the analysis the user asked for.
 const persist=async(env:RuntimeEnv,request:Request,write:()=>Promise<unknown>)=>{
  if(!storeEnabled(env)||!authorized(request,env))return false;
@@ -82,7 +85,7 @@ export async function getCandles(env:RuntimeEnv) {
  const [candles,h1,m15]=await Promise.all([getSeries(env,'5min',300,300000),getH1(env).catch(()=>null),getM15(env).catch(()=>null)]);
  const day=h1?intraday(h1,candles):null; const ind=indicators(candles); ind.levels={...ind.levels,...intradayLevels(day)};
  const last=candles.at(-1)!;
- const data={candles,ema20:ind.levels.ema20,ema50:ind.levels.ema50,indicators:ind,intraday:day,chart:{m15,h1},crt:crtSetups(candles).slice(-3),sentiment:{m5:gauge(candles),h1:h1?gauge(h1):null,pressure:pressure(candles)},intradayError:h1?null:'Candles H1 indisponíveis: níveis do dia e tendência H1 fora desta análise.',updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
+ const data={candles,ema20:ind.levels.ema20,ema50:ind.levels.ema50,indicators:ind,intraday:day,chart:{m15,h1},crt:crtSetups(candles).slice(-3),scalp:asiaSweep(candles),sentiment:{m5:gauge(candles),h1:h1?gauge(h1):null,pressure:pressure(candles)},intradayError:h1?null:'Candles H1 indisponíveis: níveis do dia e tendência H1 fora desta análise.',updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
  // If the provider has not published the bar that just closed yet, retry in 30s instead of holding stale data for 5 min.
  const behind=last.time+300000<Math.floor(Date.now()/300000)*300000;
  candlesCache={until:behind?Date.now()+30000:nextClose(),data};
@@ -184,6 +187,17 @@ const response=(data:unknown,status=200,ttl=0)=>Response.json(data,{status,heade
 // Edge functions must start responding within ~25s, but free models can take 30–60s. Slow AI routes answer at once with a
 // stream that sends a space every 5s and then the JSON (leading whitespace is valid JSON). The real status goes in the body
 // as `status` and errors keep their `error` field, so clients check `error` rather than the HTTP code.
+// Entry for a directional call, from the same fixed rules as the buy/sell check (price at the M5 close, structural stop,
+// Igor's ladder and layer for gold; USD stop and target for Bitcoin), with that check's verdict. Neutral calls get none.
+function entryOf(r:ReturnType<typeof checkTrade>|ReturnType<typeof checkBtc>):CallEntry{
+ const base={side:r.side,price:r.price,sl:r.references.stop.price,verdict:r.verdict,passed:r.passed,total:r.total,block:r.block,rr:r.references.rr};
+ if('plan' in r)return {...base,risk:r.plan.slPips,unit:'pips',tps:r.plan.tps.map(t=>({name:t.name,price:t.price})),layer:r.plan.layer?{from:r.plan.layer.from,to:r.plan.layer.to}:null};
+ return {...base,risk:r.references.risk,unit:'usd',tps:r.references.target?[{name:'Alvo',price:r.references.target.price}]:[],layer:null};
+}
+function withEntries<T extends {bias:string}>(calls:T[],run:(side:'buy'|'sell')=>CallEntry){
+ const memo:Partial<Record<'buy'|'sell',CallEntry>>={};
+ for(const c of calls){const side=c.bias==='alta'?'buy':c.bias==='baixa'?'sell':null;(c as T&{entry:CallEntry|null}).entry=side?memo[side]??=run(side):null}
+}
 type BtcData={candles:Candle[];indicators:Indicators;intraday:Intraday|null;sentiment:Sentiment;fearGreed:unknown;updatedAt:string;stale:boolean;source:string};
 // Bitcoin analysis: same dual 1h/4h call and server caps as gold, with Coinbase candles, crypto news and Fear & Greed.
 // Not stored: the prediction table and scoreboard are gold-only.
@@ -200,6 +214,7 @@ async function insightBtc(env:RuntimeEnv,key:string){
   const result=await generateInsight(key,BTC_PROMPT,context,true);
   const dual=parseDualBias(result.text,ind,{event1h,event4h:eventSoon},{m5:ind?.trend,h1:ind?c?.intraday?.h1?.trend:undefined});
   if(!dual)return response({error:result.truncated?'A resposta ficou incompleta. Nenhuma análise parcial será apresentada; tente novamente.':'O modelo não devolveu as duas previsões no formato exigido. Nada foi apresentado; tente novamente.'},502);
+  if(ind&&c)withEntries([dual.short,dual.long],side=>entryOf(checkBtc(side,c.indicators,c.intraday,events as {title:string;date:string;impact:string}[],c.stale)));
   const reference=ind&&c?{price:ind.close,time:c.updatedAt,source:'Coinbase · fechamento M5'}:null;
   return response({...dual.long,short:dual.short,model:result.model,provider:result.provider,at,reference,eventSoon,event1h,indicators:ind,saved:false,asset:'btc'});
  }catch(e){return response({error:e instanceof RouterError?e.message:'A conexão com OpenRouter falhou ou excedeu o tempo. Tente mais tarde.'},e instanceof RouterError?e.status:502)}
@@ -280,6 +295,19 @@ async function route(request:Request,env:RuntimeEnv):Promise<Response>{
   await send(telegramReply(await processSignal(env,text,'telegram',signalTime,key,storeEnabled(env))));
   return response({ok:true});
  }
+ // Telegram alerts for gold, called every 5 minutes by the database scheduler (scripts/notify-cron.mjs) with the access token.
+ if(path==='/api/notify'){
+  if(!storeEnabled(env)||!authorized(request,env))return response({error:'Não autorizado'},401);
+  if(!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_OWNER_ID)return response({error:'Telegram não configurado (TELEGRAM_BOT_TOKEN e TELEGRAM_OWNER_ID).'},503);
+  // Read through the CDN: the panel and the scheduler share one cached candle response, so alerts add no Twelve Data calls.
+  const get=async(p:string)=>{const r=await fetch(new URL(p,request.url),{signal:AbortSignal.timeout(20000)});const j=await r.json() as {ok:boolean;data:unknown;error?:string};if(!j.ok)throw new Error(j.error||p+' indisponível');return j.data};
+  const [candles,calendar]=await Promise.all([safe(()=>get('/api/candles')),safe(()=>get('/api/calendar'))]);
+  if(!candles.ok)return response({error:'Sem candles M5 para os alertas.'},503);
+  const msgs=alerts(candles.data as Parameters<typeof alerts>[0],calendar.ok?(calendar.data as {events:Parameters<typeof alerts>[1]}).events:[],Date.now());
+  const tg=async(text:string)=>{const r=await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:env.TELEGRAM_OWNER_ID,text}),signal:AbortSignal.timeout(8000)});if(!r.ok)throw new Error('Telegram respondeu HTTP '+r.status)};
+  try{return response({ok:true,sent:await sendAlerts(msgs,k=>claimAlert(env,k),tg,k=>releaseAlert(env,k).then(()=>{}))})}
+  catch(e){return response({error:e instanceof Error?e.message:'Falha ao enviar alertas.'},502)}
+ }
  if(path==='/api/check'){
   if(request.method!=='POST')return response({error:'Método inválido'},405);
   if(request.headers.get('origin')!==new URL(request.url).origin)return response({error:'Origem inválida'},403);
@@ -323,6 +351,7 @@ async function route(request:Request,env:RuntimeEnv):Promise<Response>{
    const result=await generateInsight(key,PROMPT,context,true);
    const dual=parseDualBias(result.text,ind,{event1h,event4h:eventSoon},{m5:ind?.trend,h1:ind?c?.intraday?.h1?.trend:undefined});
    if(!dual)return response({error:result.truncated?'A resposta ficou incompleta. Nenhuma análise parcial será apresentada; tente novamente.':'O modelo não devolveu as duas previsões no formato exigido. Nada foi apresentado; tente novamente.'},502);
+   if(ind&&c)withEntries([dual.short,dual.long],side=>entryOf(checkTrade(side,c.indicators,c.intraday,events as {title:string;date:string;impact:string}[],c.stale)));
    const reference=ind&&c?{price:ind.close,time:c.updatedAt,source:'Twelve Data · fechamento M5'}:null;
    // Each horizon is stored and scored on its own, so the scoreboard can compare the 1h and 4h hit rates.
    const saved=reference?await persist(env,request,()=>Promise.all([savePrediction(env,dual.short,reference,result.model),savePrediction(env,dual.long,reference,result.model)])):false;

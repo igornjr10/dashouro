@@ -31,6 +31,23 @@ export type CrtSetup={
  detail:string;
  entry?:{time:number;price:number;sl:number;slPips:number;unit:'pips'|'usd';tps:{name:string;price:number}[];target:number;layer:{from:number;to:number}|null};
 };
+export type RuleEntry=NonNullable<CrtSetup['entry']>;
+
+// Igor's rules on a structural trade (shared with lib/scalp.ts, same as strategy trades.plan): stop 3 pips beyond the
+// invalidation, skipped when wider than the session cap, widened to 10 pips minimum; TP1 must fit before the target;
+// 20/50/80 ladder capped at the target; protection layer 10–20 pips against when the stop leaves room for it.
+export function rulePlan(side:'buy'|'sell',time:number,price:number,inval:number,target:number,targetName:string):{entry:RuleEntry}|{skip:string}{
+ const d=side==='buy'?1:-1;
+ let sl=inval-d*BUFFER*PIP, slPips=Math.round(Math.abs(price-sl)/PIP);
+ const cap=capFor(time), room=(target-price)*d/PIP;
+ if(slPips>cap)return {skip:`o stop técnico seria de ${slPips} pips, acima do seu limite de ${cap}`};
+ if(room<TP[0])return {skip:`só ${Math.round(room)} pips até o alvo (menos que o TP1)`};
+ if(slPips<MIN_SL){slPips=MIN_SL;sl=price-d*MIN_SL*PIP}
+ const at=(p:number)=>round(price+d*p*PIP), finalPips=Math.min(TP[2],room);
+ const tps=[...TP.filter(p=>p<finalPips).map((p,j)=>({name:'TP'+(j+1),price:at(p)})),{name:finalPips<TP[2]?targetName:'TP3',price:at(finalPips)}].slice(0,3);
+ const to=Math.min(20,slPips-5);
+ return {entry:{time,price:round(price),sl:round(sl),slPips,unit:'pips',tps,target:round(target),layer:to>=10?{from:at(-10),to:at(-to)}:null}};
+}
 
 // Evaluates every A/B pair whose B opens at 01, 05 or 09 NY within the M5 window; the last items are the most recent.
 // rules=false (Bitcoin): same detection, but no gold pip caps or ladder; the entry shows the structural stop and the
@@ -58,7 +75,6 @@ export function crtSetups(m5:Candle[],now=Date.now(),rules=true):CrtSetup[]{
    if(!broke)continue;
    // The entry is the next bar's open; while that bar has not printed, the break's close is the reference.
    const next=m5[i+1], time=next?next.time:bar.time+M5, price=next?next.open:bar.close;
-   const d=side==='buy'?1:-1;
    const inval=side==='sell'?Math.max(...prev.map(p=>p.high),bar.high):Math.min(...prev.map(p=>p.low),bar.low);
    if(!rules){
     setup.status='entrada';
@@ -66,17 +82,11 @@ export function crtSetups(m5:Candle[],now=Date.now(),rules=true):CrtSetup[]{
     setup.detail=`Quebra de estrutura no M5: ${side==='sell'?'venda':'compra'} em ${round(price)}, invalidação em ${round(inval)} (${Math.round(Math.abs(price-inval))} USD). Alvo CRT em ${round(target)}.`;
     break;
    }
-   let sl=inval-d*BUFFER*PIP, slPips=Math.round(Math.abs(price-sl)/PIP);
-   const cap=capFor(time), room=(target-price)*d/PIP;
-   if(slPips>cap){setup.status='descartado';setup.detail=`Quebra no M5 às ${new Date(bar.time).toISOString().slice(11,16)} UTC, mas o stop técnico seria de ${slPips} pips, acima do seu limite de ${cap}.`;break}
-   if(room<TP[0]){setup.status='descartado';setup.detail=`Quebra no M5, mas só ${Math.round(room)} pips até o alvo (menos que o TP1).`;break}
-   if(slPips<MIN_SL){slPips=MIN_SL;sl=price-d*MIN_SL*PIP}
-   const at=(p:number)=>round(price+d*p*PIP), finalPips=Math.min(TP[2],room);
-   const tps=[...TP.filter(p=>p<finalPips).map((p,j)=>({name:'TP'+(j+1),price:at(p)})),{name:finalPips<TP[2]?'Alvo CRT':'TP3',price:at(finalPips)}].slice(0,3);
-   const to=Math.min(20,slPips-5);
+   const r=rulePlan(side,time,price,inval,target,'Alvo CRT');
+   if('skip' in r){setup.status='descartado';setup.detail=`Quebra no M5 às ${new Date(bar.time).toISOString().slice(11,16)} UTC, mas ${r.skip}.`;break}
    setup.status='entrada';
-   setup.entry={time,price:round(price),sl:round(sl),slPips,unit:'pips',tps,target:round(target),layer:to>=10?{from:at(-10),to:at(-to)}:null};
-   setup.detail=`Quebra de estrutura no M5: ${side==='sell'?'venda':'compra'} em ${round(price)} com stop de ${slPips} pips. Alvo CRT em ${round(target)}.`;
+   setup.entry=r.entry;
+   setup.detail=`Quebra de estrutura no M5: ${side==='sell'?'venda':'compra'} em ${round(price)} com stop de ${r.entry.slPips} pips. Alvo CRT em ${round(target)}.`;
    break;
   }
   if(setup.status==='aguardando-quebra'&&now>=b.start+8*H){setup.status='expirado';setup.detail='O H4 seguinte terminou sem quebra de estrutura no M5: setup expirado.'}

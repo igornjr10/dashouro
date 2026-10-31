@@ -39,8 +39,8 @@ function score(p:Prediction,candles:Candle[]|null):Result|undefined{
 }
 // One entry per analysis and horizon: earlier builds could log the same call twice, so duplicates are dropped on read.
 const unique=(list:Prediction[])=>{const seen=new Set<string>();return list.filter(p=>{const k=p.at+'|'+p.horizonHours;if(seen.has(k))return false;seen.add(k);return true})};
-const load=():Prediction[]|null=>{try{const s=JSON.parse(localStorage.getItem(KEY)||'[]');return Array.isArray(s)?unique(s):[]}catch{return null}};
-const store=(list:Prediction[])=>{try{localStorage.setItem(KEY,JSON.stringify(list))}catch{}};
+const load=(key=KEY):Prediction[]|null=>{try{const s=JSON.parse(localStorage.getItem(key)||'[]');return Array.isArray(s)?unique(s):[]}catch{return null}};
+const store=(list:Prediction[],key=KEY)=>{try{localStorage.setItem(key,JSON.stringify(list))}catch{}};
 
 type Rate={total:number;hits:number};
 export type CheckRow={id:string;created_at:string;side:'buy'|'sell';verdict:string;passed:number;total:number;price:number;stop_price:number;target_price:number|null;rr:number|null;block:string|null};
@@ -50,11 +50,13 @@ const fromServer=(r:ServerRow):Prediction=>({at:r.created_at,bias:r.bias,confide
  result:r.status==='pending'?undefined:r.status==='unchecked'?'unchecked':{price:Number(r.result_price),move:Number(r.result_move),hit:!!r.hit}});
 
 // With an access token the database is the source of truth (scored on the server); without one, the browser log stays as before.
-export function usePredictions(candles:Candle[]|null,access=''){
+// Bitcoin keeps its own browser log (scored on Coinbase M5) and never uses the database, which holds gold only.
+export function usePredictions(candles:Candle[]|null,accessToken='',asset:'xau'|'btc'='xau'){
+ const key=asset==='btc'?KEY+'-btc':KEY, access=asset==='btc'?'':accessToken;
  const [saved,setSaved]=useState<Prediction[]>([]),[remote,setRemote]=useState<Remote|null>(null),[syncError,setSyncError]=useState('');
  // Mount-time read of this browser's prediction log.
  // eslint-disable-next-line react-hooks/set-state-in-effect
- useEffect(()=>{setSaved(load()||[])},[]);
+ useEffect(()=>{setSaved(load(key)||[])},[key]);
  const sync=useCallback(async()=>{
   if(!access){setRemote(null);setSyncError('');return}
   try{const r=await fetch('/api/history',{headers:{'X-Aurum-Access':access},cache:'no-store'});const j=await r.json() as {error?:string;predictions:ServerRow[];checks:CheckRow[];stats:Remote['stats'];signals?:SignalHistory};if(!r.ok)throw new Error(j.error);
@@ -66,18 +68,18 @@ export function usePredictions(candles:Candle[]|null,access=''){
  useEffect(()=>{sync()},[sync,candles]);
  const local=useMemo(()=>saved.map(p=>p.result?p:{...p,result:score(p,candles)}),[saved,candles]);
  // Persist results as soon as they are scored, because the M5 window only covers the last ~8h.
- useEffect(()=>{if(local.some((p,i)=>p.result&&!saved[i].result))store(local)},[local,saved]);
+ useEffect(()=>{if(local.some((p,i)=>p.result&&!saved[i].result))store(local,key)},[local,saved,key]);
  const add=useCallback((i:Insight&{saved?:boolean})=>{
   if(!i.reference)return;if(i.saved){sync();return}
   const ref=i.reference, mk=(c:Call):Prediction=>({at:i.at,bias:c.bias,confidence:c.confidence,horizonHours:c.horizonHours,refPrice:ref.price,refTime:ref.time,model:i.model});
   const fresh=i.short?[mk(i.short),mk(i)]:[mk(i)];
   // Built and stored outside the state updater: React may run an updater twice, and with a localStorage read inside
   // it the second run saw the first write and logged the same analysis again.
-  const n=unique([...fresh,...(load()??[])]).slice(0,50);
-  store(n);setSaved(n);
- },[sync]);
- const clear=useCallback(()=>{store([]);setSaved([])},[]);
- return {list:remote?remote.list:local,remote,syncError,sync,add,clear};
+  const n=unique([...fresh,...(load(key)??[])]).slice(0,50);
+  store(n,key);setSaved(n);
+ },[sync,key]);
+ const clear=useCallback(()=>{store([],key);setSaved([])},[key]);
+ return {list:remote?remote.list:local,remote,syncError,sync,add,clear,asset};
 }
 
 const BiasIcon=({bias,size=22}:{bias:Insight['bias'];size?:number})=>bias==='alta'?<ArrowUpRight size={size}/>:bias==='baixa'?<ArrowDownRight size={size}/>:<Minus size={size}/>;
@@ -117,15 +119,15 @@ function AccessForm({onSave}:{onSave:(v:string)=>void}){
  </form>;
 }
 export function Scoreboard({predictions,clear,dbConfigured,access,setAccess}:{predictions:ReturnType<typeof usePredictions>;clear:()=>void;dbConfigured:boolean;access:string;setAccess:(v:string)=>void}){
- const {list,remote,syncError}=predictions;
+ const {list,remote,syncError}=predictions, btc=predictions.asset==='btc';
  const done=list.filter(p=>p.result&&p.result!=='unchecked') as (Prediction&{result:{price:number;move:number;hit:boolean}})[];
  const hits=done.filter(p=>p.result.hit).length, pending=list.filter(p=>!p.result).length;
  const total=remote?remote.stats.overall:{total:done.length,hits};
  return <section className="panel scoreboard">
-  <div className="panel-heading"><h2><Target size={17}/>Placar das previsões · XAU/USD</h2>
+  <div className="panel-heading"><h2><Target size={17}/>Placar das previsões · {btc?'BTC/USD':'XAU/USD'}</h2>
    {remote?<span className="status-pill good">Banco sincronizado</span>:list.length>0&&<button className="icon-button" aria-label="Apagar histórico de previsões deste navegador" onClick={clear}><Trash2 size={15}/></button>}
   </div>
-  {dbConfigured&&!remote&&<div className="access-box">{syncError&&access?<p className="connection-error">{syncError}</p>:<p className="small muted">Digite a senha de acesso para salvar previsões e avaliações no banco e ver o mesmo placar em qualquer aparelho.</p>}<AccessForm onSave={setAccess}/></div>}
+  {dbConfigured&&!remote&&!btc&&<div className="access-box">{syncError&&access?<p className="connection-error">{syncError}</p>:<p className="small muted">Digite a senha de acesso para salvar previsões e avaliações no banco e ver o mesmo placar em qualquer aparelho.</p>}<AccessForm onSave={setAccess}/></div>}
   {list.length===0?<div className="panel-note">Nenhuma previsão registrada{remote?' no banco':' neste navegador'}. Cada análise gerada entra aqui e é conferida quando o horizonte vence.</div>:<>
    <div className="score-summary">
     <div><small>Acertos</small><strong>{total.total?`${total.hits} de ${total.total}`:'—'}</strong></div>
@@ -144,6 +146,6 @@ export function Scoreboard({predictions,clear,dbConfigured,access,setAccess}:{pr
    <span className="score-when">{time(c.created_at)} · {c.passed}/{c.total} critérios · preço {num(Number(c.price))}</span>
    <span className="score-result">{verdictNames[c.verdict]||c.verdict}</span>
   </div>)}</div></>}
-  <div className="panel-note">Conferido com o fechamento M5 da Twelve Data no fim do horizonte. Alta/baixa acertam com o sinal certo; neutro acerta se o preço variar menos de 0,15%. {remote?'No banco, a conferência é feita pelo servidor sempre que algum aparelho abre o painel dentro de ~8h após o vencimento.':'Previsões com mais de ~8h sem conferência ficam como “não conferida”.'} {total.total<20&&'Com menos de 20 previsões conferidas, a taxa ainda não diz muito.'}{remote&&<> <button className="text-button" onClick={()=>setAccess('')}>Sair do banco neste aparelho</button></>}</div>
+  <div className="panel-note">Conferido com o fechamento M5 da {btc?'Coinbase':'Twelve Data'} no fim do horizonte.{btc?' As previsões do Bitcoin ficam só neste navegador, separadas das do ouro.':''} Alta/baixa acertam com o sinal certo; neutro acerta se o preço variar menos de 0,15%. {remote?'No banco, a conferência é feita pelo servidor sempre que algum aparelho abre o painel dentro de ~8h após o vencimento.':'Previsões com mais de ~8h sem conferência ficam como “não conferida”.'} {total.total<20&&'Com menos de 20 previsões conferidas, a taxa ainda não diz muito.'}{remote&&<> <button className="text-button" onClick={()=>setAccess('')}>Sair do banco neste aparelho</button></>}</div>
  </section>;
 }

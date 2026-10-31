@@ -36,6 +36,6 @@ export function checkBtc(side:'buy'|'sell',ind:Indicators,day:Intraday|null,even
   side,verdict,block,passed,total:checks.length,checks,price,atr,asset:'btc' as const,
   references:{stop:{level:behind?.[0]??null,name:stopName,price:round(stopPrice),pips:Math.round(risk)},target:{level:ahead?.[0]??null,name:targetName,price:round(targetPrice)},risk:round(risk),reward:round(reward),rr},
   eventWarning:eventAhead?{title:nextEvent!.title,date:nextEvent!.date,minutes:Math.ceil(until/60000)}:null,
-  note:'Bitcoin: distâncias em USD, a partir do fechamento M5 da Coinbase. Stop além do nível de proteção mais próximo (ou 2× ATR) e alvo no próximo nível (ou 3× ATR). As regras de pips do ouro não se aplicam. Não é ordem nem garantia de resultado.'
+  note:'Bitcoin: distâncias em USD, a partir do fechamento M5 da bolsa de BTC (Coinbase, Kraken ou Bitstamp). Stop além do nível de proteção mais próximo (ou 2× ATR) e alvo no próximo nível (ou 3× ATR). As regras de pips do ouro não se aplicam. Não é ordem nem garantia de resultado.'
  };
 }

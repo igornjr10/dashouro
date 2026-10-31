@@ -23,17 +23,33 @@ const nextClose=()=>Math.floor(Date.now()/300000)*300000+320000;
 let cache:{until:number;data:unknown}|null=null;
 export async function getBtcCandles(){
  if(cache&&Date.now()<cache.until)return cache.data;
- const [m5,m15,h1]=await Promise.all([series(300),series(900).catch(()=>null),series(3600).catch(()=>null)]);
+ const [m5,m15,h1,fearGreed]=await Promise.all([series(300),series(900).catch(()=>null),series(3600).catch(()=>null),getFearGreed().catch(()=>null)]);
  if(m5.length<60)throw new Error('Histórico M5 de BTC insuficiente');
  const day=h1?intraday(h1,m5):null, ind=indicators(m5);
  ind.levels={...ind.levels,...intradayLevels(day)};
  const last=m5.at(-1)!;
  const data={candles:m5,indicators:ind,intraday:day,chart:{m15,h1},crt:crtSetups(m5,Date.now(),false).slice(-3),
-  sentiment:{m5:gauge(m5),h1:h1?gauge(h1):null,pressure:pressure(m5)},
+  sentiment:{m5:gauge(m5),h1:h1?gauge(h1):null,pressure:pressure(m5)},fearGreed,
   updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,
   source:'Coinbase · BTC-USD · M5',url:'https://exchange.coinbase.com/trade/BTC-USD',asset:'btc',
   note:'Candles fechados da Coinbase (volume real negociado nessa bolsa). Leitura de mercado: as regras de SL/TP do ouro não se aplicam ao Bitcoin.'};
  cache={until:nextClose(),data};
+ return data;
+}
+
+// Crypto Fear & Greed index (alternative.me): daily retail-sentiment score 0–100 built from volatility, volume,
+// social media and dominance. Cached for an hour; the index itself only updates once a day.
+let fgCache:{at:number;data:unknown}|null=null;
+export async function getFearGreed(){
+ if(fgCache&&Date.now()-fgCache.at<3_600_000)return fgCache.data;
+ const r=await fetch('https://api.alternative.me/fng/?limit=2',{headers:{'User-Agent':UA,Accept:'application/json'},signal:AbortSignal.timeout(8000)});
+ if(!r.ok)throw new Error('alternative.me respondeu HTTP '+r.status);
+ const j=await r.json() as {data?:{value:string;value_classification:string;timestamp:string}[]};
+ const [now,prev]=j.data??[];
+ if(!now||!Number.isFinite(Number(now.value)))throw new Error('Índice Medo e Ganância indisponível');
+ const pt:Record<string,string>={'Extreme Fear':'Medo extremo','Fear':'Medo','Neutral':'Neutro','Greed':'Ganância','Extreme Greed':'Ganância extrema'};
+ const data={value:Number(now.value),label:pt[now.value_classification]??now.value_classification,previous:prev?Number(prev.value):null,date:new Date(Number(now.timestamp)*1000).toISOString(),source:'alternative.me · Crypto Fear & Greed',url:'https://alternative.me/crypto/fear-and-greed-index/'};
+ fgCache={at:Date.now(),data};
  return data;
 }
 

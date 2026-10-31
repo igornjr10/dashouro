@@ -7,6 +7,7 @@ import {gauge,pressure} from './sentiment';
 import {crtSetups} from './crt';
 import {getOfficialCalendar} from './official-calendar';
 import {getBtcCandles,getBtcQuote} from './btc';
+import {checkBtc} from './btc-check';
 // Saving is best effort: a database failure never blocks the analysis the user asked for.
 const persist=async(env:RuntimeEnv,request:Request,write:()=>Promise<unknown>)=>{
  if(!storeEnabled(env)||!authorized(request,env))return false;
@@ -18,6 +19,7 @@ const links = {
  cot: 'https://publicreporting.cftc.gov/resource/72hh-3qpy.json?' + new URLSearchParams({'$where':"cftc_contract_market_code='088691'",'$order':'report_date_as_yyyy_mm_dd DESC','$limit':'2','$select':'report_date_as_yyyy_mm_dd,m_money_positions_long_all,m_money_positions_short_all,open_interest_all'}),
  news: 'https://news.google.com/rss/search?q=gold+prices+Federal+Reserve+when:3d&hl=en-US&gl=US&ceid=US:en',
  fed: 'https://www.federalreserve.gov/feeds/press_monetary.xml',
+ btc: 'https://news.google.com/rss/search?q=bitcoin+price+OR+crypto+market+when:2d&hl=en-US&gl=US&ceid=US:en',
  calendar: 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
 };
 async function fetchData(url:string, json=true): Promise<any> {
@@ -39,13 +41,13 @@ export async function getCot() {
  return {...v,net:v.long-v.short,delta:vals[1]?v.long-v.short-(vals[1].long-vals[1].short):null,stale:age>12*86400000,source:'CFTC · Managed Money · COMEX',url:'https://publicreporting.cftc.gov/d/72hh-3qpy',frequency:'Semanal',note:'Futuros apenas. Posições de terça, normalmente publicadas na sexta. Não representa fluxo ao vivo nem sinal M5.'};
 }
 function clean(s:string) {return s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;|&apos;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();}
-export async function getNews(kind:'news'|'fed') {
+export async function getNews(kind:'news'|'fed'|'btc') {
  const xml=await fetchData(links[kind],false); const items=[...String(xml).matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/g)].slice(0,8).map(m=>{
   const tag=(s:string)=>clean(m[1].match(new RegExp('<'+s+'(?:\\s[^>]*)?>([\\s\\S]*?)<\\/'+s+'>','i'))?.[1]||'');
   return {title:tag('title'),url:tag('link'),date:tag('pubDate'),publisher:tag('source')||(kind==='fed'?'Federal Reserve':'Google News')};
  }).filter(i=>i.title&&/^https:\/\//.test(i.url)&&Number.isFinite(Date.parse(i.date))&&Date.parse(i.date)<=Date.now()+60000);
  if(!items.length) throw new Error('Nenhuma notícia válida retornada');
- return {items,source:kind==='fed'?'Federal Reserve':'Google News · agregador',url:kind==='fed'?'https://www.federalreserve.gov/newsevents.htm':'https://news.google.com',fetchedAt:new Date().toISOString()};
+ return {items,source:kind==='fed'?'Federal Reserve':kind==='btc'?'Google News · Bitcoin e cripto':'Google News · agregador',url:kind==='fed'?'https://www.federalreserve.gov/newsevents.htm':'https://news.google.com',fetchedAt:new Date().toISOString()};
 }
 // Candles only change when an M5 bar closes; refetch after the next close (+20s provider latency) to protect the API quota.
 const nextClose=()=>Math.floor(Date.now()/300000)*300000+320000;
@@ -130,6 +132,12 @@ function parseExplanation(text:string){
 type Sentiment={m5:ReturnType<typeof gauge>;h1:ReturnType<typeof gauge>;pressure:ReturnType<typeof pressure>};
 // The model gets only the labels and counts, not every indicator value.
 const summarize=(s:Sentiment)=>({m5:s.m5&&{label:s.m5.summary.label,buy:s.m5.summary.buy,sell:s.m5.summary.sell,neutral:s.m5.summary.neutral},h1:s.h1&&{label:s.h1.summary.label,buy:s.h1.summary.buy,sell:s.h1.summary.sell,neutral:s.h1.summary.neutral},pressure:s.pressure});
+// Bitcoin variants of the two prompts: same structure and rules, BTC context (no COT, Fear & Greed instead), USD distances.
+const BTC_PROMPT=PROMPT.replace('analista de contexto do ouro (XAU/USD)','analista de contexto do Bitcoin (BTC/USD)')
+ .replace('COT é semanal de futuros e notícias são só manchetes: contexto secundário.','Notícias são só manchetes e fearGreed (índice Medo e Ganância da alternative.me, 0 a 100, diário) é sentimento de varejo: contexto secundário. O Bitcoin negocia 24 horas, inclusive no fim de semana; distâncias em USD.')
+ .replace('A cotação spot não é preço executável.','A cotação é o último negócio na Coinbase, não o preço da corretora.');
+const BTC_CHECK_PROMPT=`Escreva TODO o texto em português do Brasil, nunca em inglês. Você explica para Igor a avaliação de uma operação em BTC/USD que ele está considerando (check.side: buy = compra, sell = venda). O veredito em check.verdict foi calculado por regras fixas e NÃO pode ser alterado nem contestado: favoravel, ressalvas, desfavoravel ou nao-operar. Responda SOMENTE com JSON válido: {"summary":"uma frase em português explicando o veredito","pros":["até 3 pontos a favor"],"cons":["até 3 pontos contra ou riscos"],"context":"até 80 palavras sobre notícias de Bitcoin e cripto, o índice Medo e Ganância (fearGreed) e a agenda dos EUA, citando fonte e data"}.
+Use só números presentes nos dados; distâncias em USD (check.references). Não invente preços, alvos, probabilidades ou eventos. Não diga para comprar nem vender: descreva os fatores e deixe a decisão com ele. Notícias são só manchetes; fearGreed é sentimento diário de varejo; na agenda, official=true é horário oficial (BLS/BEA/Fed). Se check.eventWarning existir, ele deve aparecer em cons. As regras de pips do ouro não valem para o Bitcoin.`;
 async function safe(fn:()=>Promise<unknown>){try{return {ok:true,data:await fn()}}catch(e){return {ok:false,error:e instanceof Error?e.message:'Fonte indisponível'}}}
 // H1 bars before the M5 window plus the M5 window: enough history to score signals up to ~5 days old.
 async function scoringBars(env:RuntimeEnv):Promise<Candle[]>{
@@ -176,6 +184,40 @@ const response=(data:unknown,status=200,ttl=0)=>Response.json(data,{status,heade
 // Edge functions must start responding within ~25s, but free models can take 30–60s. Slow AI routes answer at once with a
 // stream that sends a space every 5s and then the JSON (leading whitespace is valid JSON). The real status goes in the body
 // as `status` and errors keep their `error` field, so clients check `error` rather than the HTTP code.
+type BtcData={candles:Candle[];indicators:Indicators;intraday:Intraday|null;sentiment:Sentiment;fearGreed:unknown;updatedAt:string;stale:boolean;source:string};
+// Bitcoin analysis: same dual 1h/4h call and server caps as gold, with Coinbase candles, crypto news and Fear & Greed.
+// Not stored: the prediction table and scoreboard are gold-only.
+async function insightBtc(env:RuntimeEnv,key:string){
+ const [quote,news,candles,calendar]=await Promise.all([safe(getBtcQuote),safe(()=>getNews('btc')),safe(getBtcCandles),safe(getCalendar)]);
+ if(!quote.ok||(quote.data as {stale:boolean}).stale)return response({error:'Sem cotação atual de BTC, a análise está bloqueada.'},503);
+ const c=candles.ok?candles.data as BtcData:null, ind=c&&!c.stale?c.indicators:null;
+ const at=new Date().toISOString(), events=calendar.ok?(calendar.data as {events:{impact:string;date:string}[]}).events:[];
+ const highWithin=(ms:number)=>events.some(e=>e.impact==='High'&&Date.parse(e.date)>Date.now()&&Date.parse(e.date)<Date.now()+ms);
+ const event1h=highWithin(3600000), eventSoon=highWithin(4*3600000);
+ const candlesM5=c?{indicators:ind,intraday:ind?c.intraday:null,sentiment:ind?summarize(c.sentiment):null,recent:c.candles.slice(-24),updatedAt:c.updatedAt,stale:c.stale,source:c.source}:candles;
+ const context={at,asset:'BTC/USD',quote,news,fearGreed:c?.fearGreed??null,candlesM5,calendar,highImpactUsdWithin1h:event1h,highImpactUsdWithin4h:eventSoon};
+ try{
+  const result=await generateInsight(key,BTC_PROMPT,context,true);
+  const dual=parseDualBias(result.text,ind,{event1h,event4h:eventSoon},{m5:ind?.trend,h1:ind?c?.intraday?.h1?.trend:undefined});
+  if(!dual)return response({error:result.truncated?'A resposta ficou incompleta. Nenhuma análise parcial será apresentada; tente novamente.':'O modelo não devolveu as duas previsões no formato exigido. Nada foi apresentado; tente novamente.'},502);
+  const reference=ind&&c?{price:ind.close,time:c.updatedAt,source:'Coinbase · fechamento M5'}:null;
+  return response({...dual.long,short:dual.short,model:result.model,provider:result.provider,at,reference,eventSoon,event1h,indicators:ind,saved:false,asset:'btc'});
+ }catch(e){return response({error:e instanceof RouterError?e.message:'A conexão com OpenRouter falhou ou excedeu o tempo. Tente mais tarde.'},e instanceof RouterError?e.status:502)}
+}
+async function checkBtcRoute(request:Request,env:RuntimeEnv,side:'buy'|'sell'){
+ const [candles,calendar]=await Promise.all([safe(getBtcCandles),safe(getCalendar)]);
+ if(!candles.ok)return response({error:'Sem candles M5 de BTC, a operação não pode ser avaliada.'},503);
+ const c=candles.data as BtcData;
+ const events=calendar.ok?(calendar.data as {events:{title:string;date:string;impact:string}[]}).events:[];
+ const check=checkBtc(side,c.indicators,c.intraday,events,c.stale);
+ const base={...check,at:new Date().toISOString(),candlesAt:c.updatedAt,calendarOk:calendar.ok};
+ let key:string; try{key=requestKey(request,env.OPENROUTER_API_KEY)}catch{return response({...base,explanation:null,explanationError:'Conecte o OpenRouter para receber a explicação da IA.'})}
+ const news=await safe(()=>getNews('btc'));
+ try{
+  const r=await generateInsight(key,BTC_CHECK_PROMPT,{check,intraday:c.intraday,news,fearGreed:c.fearGreed,calendar},true);
+  return response({...base,explanation:parseExplanation(r.text),model:r.model});
+ }catch(e){return response({...base,explanation:null,explanationError:e instanceof RouterError?e.message:'A IA não respondeu; o checklist acima continua válido.'})}
+}
 const SLOW=new Set(['/api/insight','/api/check']);
 function heartbeat(work:()=>Promise<Response>):Response{
  const enc=new TextEncoder();
@@ -243,6 +285,7 @@ async function route(request:Request,env:RuntimeEnv):Promise<Response>{
   if(request.headers.get('origin')!==new URL(request.url).origin)return response({error:'Origem inválida'},403);
   const side=new URL(request.url).searchParams.get('side');
   if(side!=='buy'&&side!=='sell')return response({error:'Lado inválido'},400);
+  if(new URL(request.url).searchParams.get('asset')==='btc')return checkBtcRoute(request,env,side);
   const [candles,calendar]=await Promise.all([safe(()=>getCandles(env)),safe(getCalendar)]);
   if(!candles.ok)return response({error:'Sem candles M5, a operação não pode ser avaliada.'},503);
   const c=candles.data as {indicators:Indicators;intraday:Intraday|null;stale:boolean;updatedAt:string};
@@ -264,6 +307,7 @@ async function route(request:Request,env:RuntimeEnv):Promise<Response>{
   let key:string;
   try{key=requestKey(request,env.OPENROUTER_API_KEY);if(path==='/api/openrouter')return response(await checkRouterKey(key));}
   catch(e){return response({error:e instanceof RouterError?e.message:'Não foi possível validar a conexão OpenRouter.'},e instanceof RouterError?e.status:502);}
+  if(new URL(request.url).searchParams.get('asset')==='btc')return insightBtc(env,key);
   const [quote,cot,news,fed,candles,calendar]=await Promise.all([safe(getQuote),safe(getCot),safe(()=>getNews('news')),safe(()=>getNews('fed')),safe(()=>getCandles(env)),safe(getCalendar)]);
   if(!quote.ok)return response({error:'Sem cotação verificável, a análise está bloqueada.'},503);
   if((quote.data as {stale:boolean}).stale)return response({error:'Cotação desatualizada. Aguarde dados atuais para analisar.'},503);
@@ -287,8 +331,8 @@ async function route(request:Request,env:RuntimeEnv):Promise<Response>{
   }catch(e){return response({error:e instanceof RouterError?e.message:'A conexão com OpenRouter falhou ou excedeu o tempo. Tente mais tarde.'},e instanceof RouterError?e.status:502)}
  }
  // Bitcoin read-only view (Coinbase), separate paths so the gold responses and their CDN entries stay unchanged.
- if((path==='/api/btc/candles'||path==='/api/btc/quote')&&request.method==='GET'){
-  const result=await safe(path==='/api/btc/candles'?getBtcCandles:getBtcQuote);
+ if((path==='/api/btc/candles'||path==='/api/btc/quote'||path==='/api/btc/news')&&request.method==='GET'){
+  const result=await safe(path==='/api/btc/candles'?getBtcCandles:path==='/api/btc/news'?()=>getNews('btc'):getBtcQuote);
   return response({...result,checkedAt:new Date().toISOString()},result.ok?200:503,path==='/api/btc/candles'?Math.max(1,Math.ceil((nextClose()-Date.now())/1000)):0);
  }
  const fns:Record<string,()=>Promise<unknown>>={'/api/quote':getQuote,'/api/cot':getCot,'/api/news':()=>getNews('news'),'/api/fed':()=>getNews('fed'),'/api/candles':()=>getCandles(env),'/api/calendar':getCalendar};

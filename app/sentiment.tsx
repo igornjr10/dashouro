@@ -36,7 +36,8 @@ function Table({title,g}:{title:string;g:G}){
   <tbody>{[...g.oscillators.items,...g.movingAverages.items].map(i=><tr key={i.name}><td>{i.name}</td><td>{i.value.toLocaleString('pt-BR')}</td><td className={i.vote==='compra'?'green':i.vote==='venda'?'red':'muted'}>{voteName[i.vote]}</td></tr>)}</tbody></table>;
 }
 
-export function SentimentCard({s,asset='xau'}:{s:Sentiment|null;asset?:'xau'|'btc'}){
+type FearGreed={value:number;label:string;previous:number|null;date:string;source:string;url:string};
+export function SentimentCard({s,asset='xau',fearGreed=null}:{s:Sentiment|null;asset?:'xau'|'btc';fearGreed?:FearGreed|null}){
  if(!s)return null;
  const p=s.pressure;
  return <section className="panel sentiment-card">
@@ -49,6 +50,7 @@ export function SentimentCard({s,asset='xau'}:{s:Sentiment|null;asset?:'xau'|'bt
    </div>
    <div className="pressure-legend"><span>Compradores <b>{p.buyPct}%</b></span><span>Vendedores <b>{p.sellPct}%</b></span></div>
   </div>
+  {fearGreed&&<div className="fear-greed"><div><small>MEDO E GANÂNCIA (CRIPTO, DIÁRIO)</small><strong>{fearGreed.value} · {fearGreed.label}</strong><em>ontem {fearGreed.previous??'—'} · <a href={fearGreed.url} target="_blank" rel="noreferrer">alternative.me</a></em></div><div className="fg-bar" role="img" aria-label={`Índice ${fearGreed.value} de 100`}><span style={{left:fearGreed.value+'%'}}/></div><p className="muted small">0 = medo extremo, 100 = ganância extrema. Sentimento de varejo em cripto, não é sinal de entrada.</p></div>}
   <details className="sent-details"><summary>Ver todos os indicadores</summary><div className="sent-tables">{s.m5&&<Table title="M5" g={s.m5}/>}{s.h1&&<Table title="H1" g={s.h1}/>}</div></details>
   <div className="panel-note">Cada média móvel e oscilador vota compra, venda ou neutro; o saldo dá o rótulo. A pressão mede onde cada candle fechou dentro da própria faixa (perto da máxima = compradores). {asset==='btc'?'É leitura técnica dos candles da Coinbase, não votos de pessoas nem fluxo de ordens.':'É leitura técnica dos candles da Twelve Data, não votos de pessoas nem fluxo de ordens: o ouro spot não tem volume centralizado.'}</div>
  </section>;

@@ -7,6 +7,7 @@ type Ref={name:string;price:number};
 type Result={
  side:Side; verdict:'favoravel'|'ressalvas'|'desfavoravel'|'nao-operar'; block:string|null; passed:number; total:number;
  checks:{key:string;label:string;ok:boolean;detail:string}[]; price:number; atr:number; at:string; candlesAt:string;
+ asset?:'btc';
  references:{stop:Ref&{pips?:number};target:Ref|null;risk:number;reward:number|null;rr:number|null};
  plan?:{session:string;capPips:number;slPips:number;usdPerPipPerLot:number;management:string[];
   tps:{name:string;pips:number;price:number;range?:number[]}[];
@@ -28,11 +29,12 @@ export function TradeButtons({busy,onCheck,locked=false}:{busy:Side|null;onCheck
  </div>;
 }
 
-export function useTradeCheck(getHeaders:()=>Record<string,string>,onSaved:()=>void){
+// getAsset: the chart's asset when the button is pressed; Bitcoin checks use market criteria in USD, without gold pip rules.
+export function useTradeCheck(getHeaders:()=>Record<string,string>,onSaved:()=>void,getAsset:()=>string=()=>'xau'){
  const [result,setResult]=useState<Result|null>(null),[busy,setBusy]=useState<Side|null>(null),[error,setError]=useState('');
  const run=async(side:Side)=>{
   setBusy(side);setError('');setResult(null);
-  try{const r=await fetch('/api/check?side='+side,{method:'POST',headers:getHeaders()});const j=await r.json() as Result&{error?:string;saved?:boolean};if(!r.ok||j.error)throw new Error(j.error);setResult(j);if(j.saved)onSaved()}
+  try{const r=await fetch('/api/check?side='+side+(getAsset()==='btc'?'&asset=btc':''),{method:'POST',headers:getHeaders()});const j=await r.json() as Result&{error?:string;saved?:boolean};if(!r.ok||j.error)throw new Error(j.error);setResult(j);if(j.saved)onSaved()}
   catch(e){setError(e instanceof Error?e.message:'Falha ao avaliar a operação.')}
   finally{setBusy(null)}
  };
@@ -44,7 +46,7 @@ export function TradeResult({result,error,onClose,onPlan}:{result:Result|null;er
  if(!result)return <section className="panel trade-result"><div className="panel-heading"><h2>Avaliação da operação</h2><button className="icon-button" aria-label="Fechar avaliação" onClick={onClose}><X size={16}/></button></div><p className="analysis-text">{error}</p></section>;
  const {references:ref}=result, ex=result.explanation;
  return <section className="panel trade-result">
-  <div className="panel-heading"><h2>{result.side==='buy'?<TrendingUp size={17}/>:<TrendingDown size={17}/>}Avaliação de {sideName[result.side]} · XAU/USD</h2><button className="icon-button" aria-label="Fechar avaliação" onClick={onClose}><X size={16}/></button></div>
+  <div className="panel-heading"><h2>{result.side==='buy'?<TrendingUp size={17}/>:<TrendingDown size={17}/>}Avaliação de {sideName[result.side]} · {result.asset==='btc'?'BTC/USD':'XAU/USD'}</h2><button className="icon-button" aria-label="Fechar avaliação" onClick={onClose}><X size={16}/></button></div>
   <div className={'verdict verdict-'+result.verdict}>
    <div><small>VEREDITO DAS REGRAS</small><strong>{verdicts[result.verdict]}</strong><em>{result.block?`Bloqueado: ${result.block}`:`${result.passed} de ${result.total} critérios a favor`}</em></div>
    <div className="verdict-refs">
@@ -52,6 +54,10 @@ export function TradeResult({result,error,onClose,onPlan}:{result:Result|null;er
     <div><small>Risco/retorno até o TP2</small><strong>{ref.rr===null?'—':num(ref.rr)}</strong></div>
    </div>
   </div>
+  {!result.plan&&<div className="rule-plan">
+   <div className="rule-row rule-sl"><small>Stop técnico</small><strong>{num(ref.stop.price)}</strong><em>{ref.stop.name} · {num(ref.risk)} USD da entrada</em></div>
+   {ref.target&&<div className="rule-row rule-tp"><small>Alvo técnico</small><strong>{num(ref.target.price)}</strong><em>{ref.target.name} · {num(ref.reward??0)} USD</em></div>}
+  </div>}
   {result.plan&&<div className="rule-plan">
    <div className="rule-row rule-sl"><small>SL · sessão {result.plan.session} (máx. {result.plan.capPips} pips)</small><strong>{num(ref.stop.price)}</strong><em>{result.plan.slPips} pips · {ref.stop.name} · {num(result.plan.slPips*result.plan.usdPerPipPerLot)} USD por lote</em></div>
    {result.plan.tps.map(t=><div key={t.name} className="rule-row rule-tp"><small>{t.name} · {t.range?'40–50':t.name==='TP3'?'80+':t.pips} pips</small><strong>{t.range?`${num(t.range[0])} – ${num(t.range[1])}`:num(t.price)}</strong><em>{num(t.pips*result.plan!.usdPerPipPerLot)} USD por lote{t.name==='TP1'?' · depois, SL no BE':''}</em></div>)}

@@ -31,3 +31,17 @@ A chave vem de `TWELVEDATA_API_KEY` (variável de ambiente) ou do `.env.local` d
 | Rejeição de nível | 1226 | 47% | +1460 | −2218 | 2686 |
 
 Nenhum dos dois tem vantagem depois do spread. O resultado positivo dos primeiros 90 dias (CRT +122,6 pips em 14 trades) veio do único trimestre positivo do ano (T4: +127,6; T1 −164,6; T2 −49,9; T3 −99,1). Por sessão, o CRT em Londres teve 9 entradas e +205 pips e em Nova York 40 entradas e −391 pips: como essa separação foi vista depois do resultado, é uma hipótese para testar em conta demo, não uma regra. O spread de 3 pips é uma suposição; confira o real na Exness.
+
+## Pesquisa de scalping (M1–M5)
+
+`python strategy/scalp_run.py` testa quatro setups com as mesmas regras e 3 pips de spread (M5: 1 ano; M1: 30 dias, ~9 requisições para baixar).
+
+| Setup | Trades | TP1+ | Pips com spread | 1ª / 2ª metade |
+|---|---|---|---|---|
+| Varredura da Ásia em Londres (M5) | 54 | 52% | +148,6 | +65,6 / +83,0 |
+| CRT de M15 com entrada no M1 (30 dias) | 97 | 65% | +252,9 | +262,7 / −9,8 |
+| Pullback na EMA20 (M5) | 457 | 46% | −74,8 | −321,4 / +246,6 |
+| Pullback na EMA20 (M1, 30 dias) | 202 | 42% | −620,6 | −398,1 / −222,5 |
+| Rompimento da abertura (M5 / M1) | 5 / 1 | — | quase sempre descartado: a faixa de 15 min passa do SL máximo | — |
+
+A varredura da Ásia foi a única positiva nas duas metades do ano e em 3 de 4 trimestres (−24,5 / +90,1 / +56,2 / +6,5), mas a margem é pequena: +2,8 pips por operação com 3 pips de spread, e zera com spread perto de 6. Ganhou nas vendas (+182) e perdeu nas compras (−34). O CRT de M15 tem só 30 dias e caiu na segunda metade. Nada aqui está comprovado; o próximo passo é observar em conta demo.

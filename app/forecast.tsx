@@ -117,7 +117,7 @@ export function Scoreboard({predictions,clear,dbConfigured,access,setAccess}:{pr
  const hits=done.filter(p=>p.result.hit).length, pending=list.filter(p=>!p.result).length;
  const total=remote?remote.stats.overall:{total:done.length,hits};
  return <section className="panel scoreboard">
-  <div className="panel-heading"><h2><Target size={17}/>Placar das previsões</h2>
+  <div className="panel-heading"><h2><Target size={17}/>Placar das previsões · XAU/USD</h2>
    {remote?<span className="status-pill good">Banco sincronizado</span>:list.length>0&&<button className="icon-button" aria-label="Apagar histórico de previsões deste navegador" onClick={clear}><Trash2 size={15}/></button>}
   </div>
   {dbConfigured&&!remote&&<div className="access-box">{syncError&&access?<p className="connection-error">{syncError}</p>:<p className="small muted">Digite a senha de acesso para salvar previsões e avaliações no banco e ver o mesmo placar em qualquer aparelho.</p>}<AccessForm onSave={setAccess}/></div>}

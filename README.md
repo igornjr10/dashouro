@@ -25,6 +25,10 @@ GET /api/btc/candles and /api/btc/quote read Coinbase Exchange public data (BTC-
 
 lib/crt.ts ports the CRT model from strategy/ (same entries on the same 90 days of M5: 14/14). /api/candles returns the last three A/B pairs whose B opens at 01, 05 or 09 New York time, with a status (b-formando, sem-setup, aguardando-quebra, entrada, descartado, expirado) and, for an entry, the price, the session-capped stop, the 20/50/80 ladder capped at the CRT target and the protection-layer zone. The overview shows a CRT card, the chart draws the CRT High/Low and the entry plan for 8 h, and alerts fire on a confirmed sweep and on the M5 entry.
 
+## Scalping card (Asian sweep in London)
+
+lib/scalp.ts ports strategy/aurum_strategy/scalp.py asia_sweep (same entries on one year of M5: 155/155 signals, 54/54 trades). Asian range 00–07 UTC; in the London killzone (02–05 New York, not before 07 UTC) the first M5 that trades through the Asian high or low and closes back inside gives a trade against the sweep at the next bar's open, invalidation at the sweep wick, target the other side of the range, one setup per day. Stop, ladder and layer come from rulePlan in lib/crt.ts (Igor's rules, shared with the CRT). /api/candles returns it as `scalp`; the overview shows it for gold only, the chart draws its entry for 8 h and alerts fire on the entry. Weekends are reported as closed (the feed prints flat placeholder bars). Backtest: +148.6 pips net of a 3-pip spread over 54 trades, breaks even near a 6-pip spread; observe on demo.
+
 ## Partner signals (paste or Telegram forward)
 
 POST /api/signal {text, time?} and POST /api/telegram (bot webhook) share one parser for the partner's format ("Gold buy 4019 / SL 4014 / TP 4025…"; unlabeled SL lines and the "T0" typo are accepted; updates such as "tp1 for 20 pips" are rejected as non-signals). Each signal is checked against Igor's rules at its posting time (SL within the session cap, first TP ≥ 20 pips, and, while fresh, entry within 10 pips of the last M5 close plus the live market checklist). A wider SL gets a session-capped "adjusted SL".

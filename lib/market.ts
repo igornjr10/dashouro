@@ -5,6 +5,7 @@ import {authorized,history,saveCheck,savePrediction,saveSignal,scoreSignals,sign
 import {parseSignal,ruleCheck} from './signals';
 import {gauge,pressure} from './sentiment';
 import {crtSetups} from './crt';
+import {asiaSweep} from './scalp';
 import {getOfficialCalendar} from './official-calendar';
 import {getBtcCandles,getBtcQuote} from './btc';
 import {checkBtc} from './btc-check';
@@ -82,7 +83,7 @@ export async function getCandles(env:RuntimeEnv) {
  const [candles,h1,m15]=await Promise.all([getSeries(env,'5min',300,300000),getH1(env).catch(()=>null),getM15(env).catch(()=>null)]);
  const day=h1?intraday(h1,candles):null; const ind=indicators(candles); ind.levels={...ind.levels,...intradayLevels(day)};
  const last=candles.at(-1)!;
- const data={candles,ema20:ind.levels.ema20,ema50:ind.levels.ema50,indicators:ind,intraday:day,chart:{m15,h1},crt:crtSetups(candles).slice(-3),sentiment:{m5:gauge(candles),h1:h1?gauge(h1):null,pressure:pressure(candles)},intradayError:h1?null:'Candles H1 indisponíveis: níveis do dia e tendência H1 fora desta análise.',updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
+ const data={candles,ema20:ind.levels.ema20,ema50:ind.levels.ema50,indicators:ind,intraday:day,chart:{m15,h1},crt:crtSetups(candles).slice(-3),scalp:asiaSweep(candles),sentiment:{m5:gauge(candles),h1:h1?gauge(h1):null,pressure:pressure(candles)},intradayError:h1?null:'Candles H1 indisponíveis: níveis do dia e tendência H1 fora desta análise.',updatedAt:new Date(last.time+300000).toISOString(),stale:Date.now()-(last.time+300000)>600000,source:'Twelve Data · XAU/USD · M5',url:'https://twelvedata.com',note:'Apenas candles fechados. Fonte independente do gráfico e da corretora.'};
  // If the provider has not published the bar that just closed yet, retry in 30s instead of holding stale data for 5 min.
  const behind=last.time+300000<Math.floor(Date.now()/300000)*300000;
  candlesCache={until:behind?Date.now()+30000:nextClose(),data};

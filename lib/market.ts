@@ -7,6 +7,7 @@ import {parseSignal,ruleCheck} from './signals';
 import {gauge,pressure} from './sentiment';
 import {crtSetups} from './crt';
 import {asiaSweep} from './scalp';
+import {mt5Plan} from './mt5';
 import {getOfficialCalendar} from './official-calendar';
 import {getBtcCandles,getBtcQuote} from './btc';
 import {checkBtc} from './btc-check';
@@ -364,6 +365,12 @@ async function route(request:Request,env:RuntimeEnv):Promise<Response>{
    // Top-level fields keep the 4h call so the chart, alerts and older clients work unchanged; `short` carries the 1h call.
    return response({...dual.long,short:dual.short,model:result.model,provider:result.provider,at,reference,eventSoon,event1h,indicators:ind,saved});
   }catch(e){return response({error:e instanceof RouterError?e.message:'A conexão com OpenRouter falhou ou excedeu o tempo. Tente mais tarde.'},e instanceof RouterError?e.status:502)}
+ }
+ // Gold plan as plain text for the MT5 drawer (mt5/AurumPlano.mq5). Public like /api/candles, read through the CDN.
+ if(path==='/api/mt5'&&request.method==='GET'){
+  const r=await fetch(new URL('/api/candles',request.url),{signal:AbortSignal.timeout(20000)}).then(x=>x.json() as Promise<{ok:boolean;data:unknown}>).catch(()=>null);
+  if(!r?.ok)return new Response('ERRO|Sem candles M5 do ouro agora\n',{status:503,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'private, no-store'}});
+  return new Response(mt5Plan(r.data as Parameters<typeof mt5Plan>[0]),{headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'public, max-age=0, s-maxage=30'}});
  }
  // Bitcoin read-only view (Coinbase), separate paths so the gold responses and their CDN entries stay unchanged.
  if((path==='/api/btc/candles'||path==='/api/btc/quote'||path==='/api/btc/news')&&request.method==='GET'){

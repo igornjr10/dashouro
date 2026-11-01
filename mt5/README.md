@@ -31,3 +31,26 @@ Londres: média 1.7 · máx 3.2 pips · custo médio 1.7 pips
 - Se não houver negociações de ouro no histórico, a comissão aparece como 0. Nesse caso, informe o valor em **CommissionPerLot** (aba Entradas, ao arrastar o robô): comissão de ida e volta por 1 lote, na moeda da conta. Exemplo: 7 USD por lote = 0,7 pip no ouro (1 pip em 1 lote = 10 USD).
 
 O arquivo fica em **Arquivo → Abrir pasta de dados → MQL5 → Files → aurum_spread_XAUUSD.csv** (colunas separadas por `;`). Mande esse arquivo, ou um print das médias por sessão, para ajustar os testes.
+
+## AurumPlano.mq5: o plano do painel no gráfico
+
+Robô que **só desenha**: lê o plano do painel Aurum a cada minuto e marca no gráfico de ouro a faixa da Ásia e, quando há setup, a entrada (seta), o **SL**, os **TPs** e a faixa da **camada de proteção**. São os mesmos setups do painel (scalping da Ásia e CRT), já com as suas regras de stop e alvos. **Não envia, altera nem fecha ordens**: a decisão e a ordem são suas.
+
+### Instalar
+
+1. Libere o acesso ao painel: no MT5, **Ferramentas → Opções → Expert Advisors**, marque **"Permitir WebRequest para as URLs listadas"**, clique em adicionar e digite `https://dashouro-sigma.vercel.app`. OK.
+2. No MetaEditor (F4): **Arquivo → Novo → Expert Advisor (modelo)**, nome `AurumPlano`, cole o conteúdo de `AurumPlano.mq5` e compile (F7).
+3. O MT5 aceita um robô por gráfico. Abra **outro** gráfico de XAUUSD (M5 ou M15 é o melhor) e arraste **AurumPlano** para ele. O AurumSpread fica no primeiro.
+
+### Como ler
+
+- **Retângulo cinza:** faixa da Ásia (00–07 UTC), com a máxima e a mínima pontilhadas.
+- **Linha dourada e seta:** entrada (compra ou venda).
+- **Linha vermelha:** SL, com os pips.
+- **Linhas verdes:** TP1 (cheia), TP2 e TP3 (tracejadas).
+- **Faixa laranja:** onde entraria a camada de proteção (mesmo lote e mesmo SL).
+- O canto do gráfico mostra o status do scalping e do CRT e o ajuste de preço aplicado.
+
+O painel usa a cotação da Twelve Data, que difere um pouco da Exness. Com **AlignToBroker** ligado, o robô compara o último candle M5 dos dois e desloca as linhas para o seu preço; os pips de SL e TP não mudam.
+
+Quando surge uma entrada nova, aparece um alerta do MT5 (desligue em **AlertOnNew**). Os mesmos avisos chegam no Telegram.

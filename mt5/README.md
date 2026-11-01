@@ -19,8 +19,15 @@ Deixe o gráfico aberto pelo menos durante Ásia, Londres e Nova York de um dia 
 
 ```
 Aurum · spread de XAUUSD
-Agora: 1.6 pips (0.16 USD)
-Londres: média 1.7 · máx 3.2 pips
+Agora: 1.6 pips (0.16 USD) · custo total 1.6 pips
+Comissão: 0.00 USD/lote ida+volta = 0.0 pips (média do seu histórico, 12.40 lotes)
+Londres: média 1.7 · máx 3.2 pips · custo médio 1.7 pips
 ```
+
+### Spread e comissão
+
+- **Conta Standard / Standard Cent:** a margem da corretora já vem embutida no spread (bid/ask), então a comissão é 0 e o custo total é igual ao spread.
+- **Conta Raw Spread / Zero / Pro:** o spread é pequeno, mas há uma comissão por lote cobrada fora do bid/ask. O robô lê essa comissão das suas próprias negociações de XAUUSD no histórico (só leitura: comissão + taxa ÷ lotes abertos) e soma ao spread em "custo total".
+- Se não houver negociações de ouro no histórico, a comissão aparece como 0. Nesse caso, informe o valor em **CommissionPerLot** (aba Entradas, ao arrastar o robô): comissão de ida e volta por 1 lote, na moeda da conta. Exemplo: 7 USD por lote = 0,7 pip no ouro (1 pip em 1 lote = 10 USD).
 
 O arquivo fica em **Arquivo → Abrir pasta de dados → MQL5 → Files → aurum_spread_XAUUSD.csv** (colunas separadas por `;`). Mande esse arquivo, ou um print das médias por sessão, para ajustar os testes.
